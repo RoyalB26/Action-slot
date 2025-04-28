@@ -167,7 +167,62 @@ class TACO(Dataset):
 
         print('num_videos: ' + str(len(self.variants)))
 
-
+    def parse_tracklets(self):
+        """
+            tracklet (List[List[Dict]]):
+                T , boxes per_frame , key: obj_id
+            return:
+                T x N x 4
+        """
+        def parse_tracklet(tracklet,root,index):
+            out = np.zeros((self.seq_len,self.Max_N,4))
+            obj_id_dict = {}
+            count = 0
+            for i,track in enumerate(tracklet):
+                for boxes in track:
+                    for obj in boxes:
+                        if obj not in obj_id_dict :
+                            if count == 20:
+                                continue
+                            obj_id_dict[obj] = count
+                            count += 1
+                        out[i][obj_id_dict[obj]] = boxes[obj]
+            np.save(os.path.join(root,'tracks','%s' % (index)),out)
+            # with open(os.path.join(root,'tracks','%s.json' % (index)), 'w') as f:
+            #     json.dump(out, f)
+                        
+            
+        # for each data
+        for data in tqdm(self.videos_list):
+            root = data[0][0].split('/')
+            root = root[:-3]
+            root = '/'+os.path.join(*root)
+            if not os.path.isdir(os.path.join(root,'tracks')):
+                os.mkdir(os.path.join(root,'tracks'))
+            if not os.path.isdir(os.path.join(root,'tracks','gt')):
+                os.mkdir(os.path.join(root,'tracks','gt'))
+            if not os.path.isdir(os.path.join(root,'tracks','pred')):
+                os.mkdir(os.path.join(root,'tracks','pred'))
+            # read bbox.json
+            f = open(os.path.join(root,'bbox.json'))
+            bboxs = json.load(f)
+            f.close()
+            for i,sample in enumerate(data):
+                out = np.zeros((self.seq_len,self.Max_N,4))
+                obj_id_dict = {}
+                count = 0
+                # iterate each imgs
+                for j,frame_idx in enumerate(sample):
+                    frame_idx = frame_idx.split('/')[-1][:-4]
+                    for obj_id, box in bboxs[frame_idx].items():
+                        if obj_id not in obj_id_dict:
+                            if count == 20:
+                                continue
+                            obj_id_dict[obj_id] = count
+                            count += 1
+                        out[j][obj_id_dict[obj_id]] = box
+                np.save(os.path.join(root,'tracks','gt','%s' % (i)),out)
+                
     def parse_tracklets_detection(self):
         """
             read {scenario}/tracking_pred_2/tracks/front.txt
