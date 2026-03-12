@@ -453,9 +453,7 @@ def calculate_confusion(confusion_label, pred):
 
 
 
-torch.cuda.empty_cache()
-args, logdir = get_eval_parser()
-print(args)
+
 
 class Engine(object):
     """Engine that runs training and inference.
@@ -653,20 +651,23 @@ class Engine(object):
 
             # print(num_selected_sample)
 
-            
-torch.cuda.empty_cache() 
-seq_len = args.seq_len
-num_ego_class = 4
-num_actor_class = 64
+if __name__ == "__main__":
+    torch.cuda.empty_cache()
+    args, logdir = get_eval_parser()
+    print(args)
+    torch.cuda.empty_cache() 
+    seq_len = args.seq_len
+    num_ego_class = 4
+    num_actor_class = 64
 
-# Data
-val_set = taco.TACO(args=args, split='val')
-dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=4, pin_memory=True, drop_last=True)
+    # Data
+    val_set = taco.TACO(args=args, split='val')
+    dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=4, pin_memory=True, drop_last=True)
 
-model = generate_model(args, num_ego_class, num_actor_class).cuda()
-trainer = Engine(args)
+    model = generate_model(args, num_ego_class, num_actor_class).cuda()
+    trainer = Engine(args)
 
-model_path = os.path.join(args.cp)
-model.load_state_dict(torch.load(model_path))
+    model_path = os.path.join(args.cp)
+    model.load_state_dict(torch.load(model_path))
 
-trainer.validate(model, dataloader_val, None)
+    trainer.validate(model, dataloader_val, None)

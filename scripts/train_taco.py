@@ -7,7 +7,7 @@ import os
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
-from parser import get_parser
+from get_parser import get_parser
 import math
 import matplotlib.pyplot as plt
 # matplotlib.use('TkAgg')
@@ -441,6 +441,7 @@ class Engine(object):
 if __name__ == '__main__':
     args, logdir = get_parser()
     print(args)
+    logdir = logdir.replace(':', '_').replace('\n', '_')
     writer = SummaryWriter(log_dir=logdir)
     seq_len = args.seq_len
 
