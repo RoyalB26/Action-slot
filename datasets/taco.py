@@ -43,7 +43,7 @@ class TACO(Dataset):
 
         self.step = []
         self.start_idx = []
-        self.num_class = 64
+        self.num_class = 6
         self.max_num_obj = []
         
         self.Max_N = Max_N
@@ -61,7 +61,7 @@ class TACO(Dataset):
 
         f = open('../datasets/taco_'+split+'_data.json')
         scenario_list = json.load(f)
-        f_label = open('../datasets/taco_'+split+'_label.json')
+        f_label = open('../datasets/taco_new_'+split+'_label.json')
         label_list = json.load(f_label)
         for scenario in tqdm(scenario_list):
             if not scenario in label_list:
@@ -400,12 +400,12 @@ def get_obj_mask(obj_path):
     obj_masks = np.load(obj_path)
     # obj_masks = list(seg_dict.values())
     if obj_masks.shape[0] == 0:
-        obj_masks = torch.zeros([64, 32, 96], dtype=torch.int32)
+        obj_masks = torch.zeros([6, 32, 96], dtype=torch.int32)
     else:
         obj_masks = torch.from_numpy(np.stack(obj_masks, 0))
     # img = torch.flip(torch.from_numpy(img).type(torch.int).permute(2,0,1),[0])
     obj_masks = obj_masks.type(torch.int)
-    pad_num = 64 - obj_masks.shape[0]
+    pad_num = 6 - obj_masks.shape[0]
     obj_masks = torch.cat((obj_masks, torch.zeros([pad_num, 32, 96], dtype=torch.int32)), dim=0)
     obj_masks = obj_masks.type(torch.float32)
 
@@ -446,8 +446,8 @@ def to_np_no_norm(v):
         v[i] = transform(v[i])
     return v
 
-def get_labels(args, gt, num_slots=64):   
-    num_class = 64
+def get_labels(args, gt, num_slots=6):   
+    num_class = 6
     model_name = args.model_name
     allocated_slot = args.allocated_slot
     agent_label = gt['agents']
@@ -487,6 +487,9 @@ def get_labels(args, gt, num_slots=64):
                     'p+:c4-c1': 62, 'p+:c4-c3': 63 
                     }
 
+    objects_table= {'c': 0, 'c+': 1,
+                    'b': 2, 'b+': 3,
+                    'p':4, 'p+': 5}
     ego_label = torch.tensor(ego_label)
     agent_label = torch.FloatTensor(agent_label)
     proposal_train_label = []

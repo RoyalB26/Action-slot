@@ -323,28 +323,28 @@ class Engine(object):
                     map_pred_actor_list.astype(np.float32),
                     )
             c_mAP = average_precision_score(
-                    label_actor_list[:, :12],
-                    map_pred_actor_list[:, :12].astype(np.float32)
+                    label_actor_list[:, :1],
+                    map_pred_actor_list[:, :1].astype(np.float32)
                     )
             b_mAP = average_precision_score(
-                    label_actor_list[:, 24:36],
-                    map_pred_actor_list[:, 24:36].astype(np.float32)
+                    label_actor_list[:, 2:3],
+                    map_pred_actor_list[:, 2:3].astype(np.float32)
                     )
             p_mAP = average_precision_score(
-                    label_actor_list[:, 48:56],
-                    map_pred_actor_list[:, 48:56].astype(np.float32),
+                    label_actor_list[:, 4:5],
+                    map_pred_actor_list[:, 4:5].astype(np.float32),
                     )
             group_c_mAP = average_precision_score(
-                    label_actor_list[:, 12:24],
-                    map_pred_actor_list[:, 12:24].astype(np.float32)
+                    label_actor_list[:, 1:2],
+                    map_pred_actor_list[:, 1:2].astype(np.float32)
                     )
             group_b_mAP = average_precision_score(
-                    label_actor_list[:, 36:48],
-                    map_pred_actor_list[:, 36:48].astype(np.float32)
+                    label_actor_list[:, 3:4],
+                    map_pred_actor_list[:, 3:4].astype(np.float32)
                     )
             group_p_mAP = average_precision_score(
-                    label_actor_list[:, 56:64],
-                    map_pred_actor_list[:, 56:64].astype(np.float32),
+                    label_actor_list[:, 5:6],
+                    map_pred_actor_list[:, 5:6].astype(np.float32),
                     )
             mAP_per_class = average_precision_score(
                     label_actor_list,
@@ -396,27 +396,27 @@ class Engine(object):
                 f.write('\n')
 
                 f.write('c per class: + \n')
-                for ap in mAP_per_class[:12].tolist():
+                for ap in mAP_per_class[:1].tolist():
                     f.write("%.4f " % ap)
                 f.write('\n')
                 f.write('b per class: \n')
-                for ap in mAP_per_class[12:24].tolist():
+                for ap in mAP_per_class[1:2].tolist():
                     f.write("%.4f " % ap)
                 f.write('\n')
                 f.write('c+ per class: \n')
-                for ap in mAP_per_class[24:36].tolist():
+                for ap in mAP_per_class[2:3].tolist():
                     f.write("%.4f " % ap)
                 f.write('\n')
                 f.write('b+ per class: \n')
-                for ap in mAP_per_class[36:48].tolist():
+                for ap in mAP_per_class[3:4].tolist():
                     f.write("%.4f " % ap)
                 f.write('\n')
                 f.write('p per class: \n')
-                for ap in mAP_per_class[48:56].tolist():
+                for ap in mAP_per_class[4:5].tolist():
                     f.write("%.4f " % ap)
                 f.write('\n')
                 f.write('p+ per class: \n')
-                for ap in mAP_per_class[56:64].tolist():
+                for ap in mAP_per_class[5:6].tolist():
                     f.write("%.4f " % ap)
                 f.write('\n')
                 f.write('*'*15 + '\n')
@@ -446,7 +446,7 @@ if __name__ == '__main__':
     seq_len = args.seq_len
 
     num_ego_class = 4
-    num_actor_class = 64
+    num_actor_class = 6
 
     print('initialize train set')
     train_set = TACO(args=args, split='train')

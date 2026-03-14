@@ -1,0 +1,242 @@
+epoch: 1
+best mAP: 0.7937
+mAP: 0.7937
+mAP of c: 0.7678
+mAP of b: 0.5142
+mAP of p: 0.8477
+mAP of c+: 0.8446
+mAP of b+: 0.9353
+mAP of p+: 0.8523
+c per class: + 
+0.7678 
+b per class: 
+0.8446 
+c+ per class: 
+0.5142 
+b+ per class: 
+0.9353 
+p per class: 
+0.8477 
+p+ per class: 
+0.8523 
+***************
+epoch: 11
+best mAP: 0.8846
+mAP: 0.8846
+mAP of c: 0.8651
+mAP of b: 0.7909
+mAP of p: 0.8922
+mAP of c+: 0.8887
+mAP of b+: 0.9656
+mAP of p+: 0.9053
+c per class: + 
+0.8651 
+b per class: 
+0.8887 
+c+ per class: 
+0.7909 
+b+ per class: 
+0.9656 
+p per class: 
+0.8922 
+p+ per class: 
+0.9053 
+***************
+epoch: 21
+best mAP: 0.8846
+mAP: 0.8735
+mAP of c: 0.8657
+mAP of b: 0.7289
+mAP of p: 0.8907
+mAP of c+: 0.9127
+mAP of b+: 0.9675
+mAP of p+: 0.8756
+c per class: + 
+0.8657 
+b per class: 
+0.9127 
+c+ per class: 
+0.7289 
+b+ per class: 
+0.9675 
+p per class: 
+0.8907 
+p+ per class: 
+0.8756 
+***************
+epoch: 31
+best mAP: 0.8846
+mAP: 0.8692
+mAP of c: 0.8590
+mAP of b: 0.8022
+mAP of p: 0.8663
+mAP of c+: 0.8754
+mAP of b+: 0.9718
+mAP of p+: 0.8406
+c per class: + 
+0.8590 
+b per class: 
+0.8754 
+c+ per class: 
+0.8022 
+b+ per class: 
+0.9718 
+p per class: 
+0.8663 
+p+ per class: 
+0.8406 
+***************
+epoch: 41
+best mAP: 0.8847
+mAP: 0.8847
+mAP of c: 0.8665
+mAP of b: 0.8121
+mAP of p: 0.8850
+mAP of c+: 0.8800
+mAP of b+: 0.9703
+mAP of p+: 0.8940
+c per class: + 
+0.8665 
+b per class: 
+0.8800 
+c+ per class: 
+0.8121 
+b+ per class: 
+0.9703 
+p per class: 
+0.8850 
+p+ per class: 
+0.8940 
+***************
+epoch: 51
+best mAP: 0.8847
+mAP: 0.8768
+mAP of c: 0.8547
+mAP of b: 0.7803
+mAP of p: 0.8599
+mAP of c+: 0.9034
+mAP of b+: 0.9687
+mAP of p+: 0.8939
+c per class: + 
+0.8547 
+b per class: 
+0.9034 
+c+ per class: 
+0.7803 
+b+ per class: 
+0.9687 
+p per class: 
+0.8599 
+p+ per class: 
+0.8939 
+***************
+epoch: 61
+best mAP: 0.8847
+mAP: 0.8797
+mAP of c: 0.8609
+mAP of b: 0.7886
+mAP of p: 0.8657
+mAP of c+: 0.8939
+mAP of b+: 0.9617
+mAP of p+: 0.9076
+c per class: + 
+0.8609 
+b per class: 
+0.8939 
+c+ per class: 
+0.7886 
+b+ per class: 
+0.9617 
+p per class: 
+0.8657 
+p+ per class: 
+0.9076 
+***************
+epoch: 71
+best mAP: 0.8847
+mAP: 0.8811
+mAP of c: 0.8664
+mAP of b: 0.7841
+mAP of p: 0.8897
+mAP of c+: 0.8879
+mAP of b+: 0.9547
+mAP of p+: 0.9038
+c per class: + 
+0.8664 
+b per class: 
+0.8879 
+c+ per class: 
+0.7841 
+b+ per class: 
+0.9547 
+p per class: 
+0.8897 
+p+ per class: 
+0.9038 
+***************
+epoch: 81
+best mAP: 0.8847
+mAP: 0.8677
+mAP of c: 0.8633
+mAP of b: 0.7815
+mAP of p: 0.8632
+mAP of c+: 0.8848
+mAP of b+: 0.9481
+mAP of p+: 0.8651
+c per class: + 
+0.8633 
+b per class: 
+0.8848 
+c+ per class: 
+0.7815 
+b+ per class: 
+0.9481 
+p per class: 
+0.8632 
+p+ per class: 
+0.8651 
+***************
+epoch: 91
+best mAP: 0.8847
+mAP: 0.8617
+mAP of c: 0.8201
+mAP of b: 0.7481
+mAP of p: 0.8614
+mAP of c+: 0.8747
+mAP of b+: 0.9625
+mAP of p+: 0.9031
+c per class: + 
+0.8201 
+b per class: 
+0.8747 
+c+ per class: 
+0.7481 
+b+ per class: 
+0.9625 
+p per class: 
+0.8614 
+p+ per class: 
+0.9031 
+***************
+epoch: 100
+best mAP: 0.8847
+mAP: 0.8457
+mAP of c: 0.8516
+mAP of b: 0.7365
+mAP of p: 0.8693
+mAP of c+: 0.8425
+mAP of b+: 0.9588
+mAP of p+: 0.8153
+c per class: + 
+0.8516 
+b per class: 
+0.8425 
+c+ per class: 
+0.7365 
+b+ per class: 
+0.9588 
+p per class: 
+0.8693 
+p+ per class: 
+0.8153 
+***************
