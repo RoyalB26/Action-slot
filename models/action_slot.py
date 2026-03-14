@@ -75,9 +75,10 @@ class SlotAttention(nn.Module):
         slots = torch.cat(slots, 1)
         self.register_buffer("slots", slots)
 
-    # def extract_slots_for_nuscenes(self):
-    #     slots = torch.cat((self.slots[:, :24, :], slots[:, 33:34, :], self.slots[:, -17:, :]), 1)
+    def extract_slots_for_nuscenes(self):
+        slots = torch.cat((self.slots[:, :24, :], slots[:, 33:34, :], self.slots[:, -17:, :]), 1)
         self.register_buffer("slots", slots)
+    
     def get_3d_slot(self, slots, inputs):
         b, l, h, w, d = inputs.shape
         inputs = self.pe(inputs)
