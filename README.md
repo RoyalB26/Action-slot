@@ -61,7 +61,7 @@ Only Objects:
 python train_taco.py --dataset taco --root /home/jovyan/TACO --model_name action_slot --num_slots 6 --bg_slot --bg_mask --action_attn_weight 1 --allocated_slot --bg_attn_weight 0.5 --taco_class Object
 
 Only Actions:
-python train_taco.py --dataset taco --root /home/jovyan/TACO --model_name action_slot --num_slots 20 --bg_slot --bg_mask --action_attn_weight 1 --allocated_slot --bg_attn_weight 0.5 --batch_size 12 --num_workers 8 --taco_class Action
+python train_taco.py --dataset taco --root /home/jovyan/TACO --model_name action_slot --num_slots 20 --bg_slot --bg_mask --action_attn_weight 1 --allocated_slot --bg_attn_weight 0.5 --taco_class Action
 # X3D
 python train_taco.py --dataset taco --root [path_to_TACO] --model_name x3d 
 ```
