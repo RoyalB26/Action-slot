@@ -45,7 +45,9 @@ def get_eval_parser():
     parser.add_argument('--gt', help="", action="store_true")
     parser.add_argument('--num_objects', type=int, default=-1)
 
-
+    # taco classes
+    parser.add_argument('--taco_class', type= str, default= 'both', help= 'Set taco class')
+    
     args = parser.parse_args()
 
 

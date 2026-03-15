@@ -317,110 +317,249 @@ class Engine(object):
             label_actor_list = label_actor_list.reshape((label_actor_list.shape[0], num_actor_class))
             map_pred_actor_list = np.array(map_pred_actor_list)
             label_actor_list = np.array(label_actor_list)
+            if args.taco_class == 'Action':
+                mAP = average_precision_score(
+                        label_actor_list,
+                        map_pred_actor_list.astype(np.float32),
+                        )
+                z_mAP = average_precision_score(
+                        label_actor_list[:, 0:12],
+                        map_pred_actor_list[:, 0:12].astype(np.float32)
+                )
 
-            mAP = average_precision_score(
-                    label_actor_list,
-                    map_pred_actor_list.astype(np.float32),
-                    )
-            c_mAP = average_precision_score(
-                    label_actor_list[:, :1],
-                    map_pred_actor_list[:, :1].astype(np.float32)
-                    )
-            b_mAP = average_precision_score(
-                    label_actor_list[:, 2:3],
-                    map_pred_actor_list[:, 2:3].astype(np.float32)
-                    )
-            p_mAP = average_precision_score(
-                    label_actor_list[:, 4:5],
-                    map_pred_actor_list[:, 4:5].astype(np.float32),
-                    )
-            group_c_mAP = average_precision_score(
-                    label_actor_list[:, 1:2],
-                    map_pred_actor_list[:, 1:2].astype(np.float32)
-                    )
-            group_b_mAP = average_precision_score(
-                    label_actor_list[:, 3:4],
-                    map_pred_actor_list[:, 3:4].astype(np.float32)
-                    )
-            group_p_mAP = average_precision_score(
-                    label_actor_list[:, 5:6],
-                    map_pred_actor_list[:, 5:6].astype(np.float32),
-                    )
-            mAP_per_class = average_precision_score(
-                    label_actor_list,
-                    map_pred_actor_list.astype(np.float32),	
-                    average=None)
+                c_mAP = average_precision_score(
+                        label_actor_list[:, 12:20],
+                        map_pred_actor_list[:, 12:20].astype(np.float32)
+                )
+                mAP_per_class = average_precision_score(
+                        label_actor_list,
+                        map_pred_actor_list.astype(np.float32),	
+                        average=None)
 
-            print(f'(val) mAP: {mAP}')
-            print(f'(val) mAP of the c: {c_mAP}')
-            print(f'(val) mAP of the b: {b_mAP}')
-            print(f'(val) mAP of the p: {p_mAP}')
-            print(f'(val) mAP of the c+: {group_c_mAP}')
-            print(f'(val) mAP of the b+: {group_b_mAP}')
-            print(f'(val) mAP of the p+: {group_p_mAP}')
+                print(f'(val) mAP: {mAP}')
+                print(f'(val) mAP of z actions: {z_mAP}')
+                print(f'(val) mAP of c actions: {c_mAP}')
+                print('z per class: \n')
+                for ap in mAP_per_class[:12].tolist():
+                    print("%.4f " % ap, end = ' ')
+                print('c per class: \n')
+                for ap in mAP_per_class[12:20].tolist():
+                    print("%.4f " % ap, end =  " ")
+                print(f'acc of the ego: {self.correct_ego/self.total_ego}')
+                writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
 
-            print(f'acc of the ego: {self.correct_ego/self.total_ego}')
-            writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
-            if mAP > self.best_mAP:
-                self.best_mAP = mAP
-                self.best_log = [
-                    f'(val) mAP: {mAP}',
-                    f'(val) mAP of the c: {c_mAP}',
-                    f'(val) mAP of the b: {b_mAP}',
-                    f'(val) mAP of the p: {p_mAP}',
-                    f'(val) mAP of the c+: {group_c_mAP}',
-                    f'(val) mAP of the b+: {group_b_mAP}',
-                    f'(val) mAP of the p+: {group_p_mAP}'
-                ]
-                save_cp = True
-            print(f'best mAP : {self.best_mAP}')
+                if mAP > self.best_mAP:
+                    self.best_mAP = mAP
+                    self.best_log = [
+                        f'(val) mAP: {mAP}',
+                        f'(val) mAP of z actions: {z_mAP}',
+                        f'(val) mAP of c actions: {c_mAP}',
+                    ]
+                    save_cp = True
+                print(f'best mAP : {self.best_mAP}')
 
-            with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
-                f.write('epoch: ' + str(self.cur_epoch))
-                f.write('\n')
-                f.write('best mAP: %.4f' % self.best_mAP)
-                f.write('\n')
-                f.write('mAP: %.4f' % mAP)
-                f.write('\n')
-                f.write('mAP of c: %.4f' % c_mAP)
-                f.write('\n')
-                f.write('mAP of b: %.4f' % b_mAP)
-                f.write('\n')
-                f.write('mAP of p: %.4f' % p_mAP)
-                f.write('\n')
-                f.write('mAP of c+: %.4f' % group_c_mAP)
-                f.write('\n')
-                f.write('mAP of b+: %.4f' % group_b_mAP)
-                f.write('\n')
-                f.write('mAP of p+: %.4f' % group_p_mAP)
-                f.write('\n')
+                with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
+                    f.write('epoch: ' + str(self.cur_epoch))
+                    f.write('\n')
+                    f.write('best mAP: %.4f' % self.best_mAP)
+                    f.write('\n')
+                    f.write('mAP: %.4f' % mAP)
+                    f.write('\n')
+                    f.write('mAP of z: %.4f' % z_mAP)
+                    f.write('\n')
+                    f.write('mAP of c: %.4f' % c_mAP)
+                    f.write('\n')
 
-                f.write('c per class: + \n')
-                for ap in mAP_per_class[:1].tolist():
-                    f.write("%.4f " % ap)
-                f.write('\n')
-                f.write('b per class: \n')
-                for ap in mAP_per_class[1:2].tolist():
-                    f.write("%.4f " % ap)
-                f.write('\n')
-                f.write('c+ per class: \n')
-                for ap in mAP_per_class[2:3].tolist():
-                    f.write("%.4f " % ap)
-                f.write('\n')
-                f.write('b+ per class: \n')
-                for ap in mAP_per_class[3:4].tolist():
-                    f.write("%.4f " % ap)
-                f.write('\n')
-                f.write('p per class: \n')
-                for ap in mAP_per_class[4:5].tolist():
-                    f.write("%.4f " % ap)
-                f.write('\n')
-                f.write('p+ per class: \n')
-                for ap in mAP_per_class[5:6].tolist():
-                    f.write("%.4f " % ap)
-                f.write('\n')
-                f.write('*'*15 + '\n')
+                    f.write('z per class: \n')
+                    for ap in mAP_per_class[:12].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+                    f.write('c per class: \n')
+                    for ap in mAP_per_class[12:20].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+            elif args.taco_class == 'Object':
 
+                mAP = average_precision_score(
+                        label_actor_list,
+                        map_pred_actor_list.astype(np.float32),
+                        )
+                c_mAP = average_precision_score(
+                        label_actor_list[:, :1],
+                        map_pred_actor_list[:, :1].astype(np.float32)
+                        )
+                b_mAP = average_precision_score(
+                        label_actor_list[:, 2:3],
+                        map_pred_actor_list[:, 2:3].astype(np.float32)
+                        )
+                p_mAP = average_precision_score(
+                        label_actor_list[:, 4:5],
+                        map_pred_actor_list[:, 4:5].astype(np.float32),
+                        )
+                group_c_mAP = average_precision_score(
+                        label_actor_list[:, 1:2],
+                        map_pred_actor_list[:, 1:2].astype(np.float32)
+                        )
+                group_b_mAP = average_precision_score(
+                        label_actor_list[:, 3:4],
+                        map_pred_actor_list[:, 3:4].astype(np.float32)
+                        )
+                group_p_mAP = average_precision_score(
+                        label_actor_list[:, 5:6],
+                        map_pred_actor_list[:, 5:6].astype(np.float32),
+                        )
+                mAP_per_class = average_precision_score(
+                        label_actor_list,
+                        map_pred_actor_list.astype(np.float32),	
+                        average=None)
+
+                print(f'(val) mAP: {mAP}')
+                print(f'(val) mAP of the c: {c_mAP}')
+                print(f'(val) mAP of the b: {b_mAP}')
+                print(f'(val) mAP of the p: {p_mAP}')
+                print(f'(val) mAP of the c+: {group_c_mAP}')
+                print(f'(val) mAP of the b+: {group_b_mAP}')
+                print(f'(val) mAP of the p+: {group_p_mAP}')
+
+                print(f'acc of the ego: {self.correct_ego/self.total_ego}')
+                writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
+                if mAP > self.best_mAP:
+                    self.best_mAP = mAP
+                    self.best_log = [
+                        f'(val) mAP: {mAP}',
+                        f'(val) mAP of the c: {c_mAP}',
+                        f'(val) mAP of the b: {b_mAP}',
+                        f'(val) mAP of the p: {p_mAP}',
+                        f'(val) mAP of the c+: {group_c_mAP}',
+                        f'(val) mAP of the b+: {group_b_mAP}',
+                        f'(val) mAP of the p+: {group_p_mAP}'
+                    ]
+                    save_cp = True
+                print(f'best mAP : {self.best_mAP}')
+
+                with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
+                    f.write('epoch: ' + str(self.cur_epoch))
+                    f.write('\n')
+                    f.write('best mAP: %.4f' % self.best_mAP)
+                    f.write('\n')
+                    f.write('mAP: %.4f' % mAP)
+                    f.write('\n')
+                    f.write('mAP of c: %.4f' % c_mAP)
+                    f.write('\n')
+                    f.write('mAP of b: %.4f' % b_mAP)
+                    f.write('\n')
+                    f.write('mAP of p: %.4f' % p_mAP)
+                    f.write('\n')
+                    f.write('mAP of c+: %.4f' % group_c_mAP)
+                    f.write('\n')
+                    f.write('mAP of b+: %.4f' % group_b_mAP)
+                    f.write('\n')
+                    f.write('mAP of p+: %.4f' % group_p_mAP)
+                    f.write('\n')
+            else:
+                mAP = average_precision_score(
+                        label_actor_list,
+                        map_pred_actor_list.astype(np.float32),
+                        )
+                c_mAP = average_precision_score(
+                        label_actor_list[:, :12],
+                        map_pred_actor_list[:, :12].astype(np.float32)
+                        )
+                b_mAP = average_precision_score(
+                        label_actor_list[:, 24:36],
+                        map_pred_actor_list[:, 24:36].astype(np.float32)
+                        )
+                p_mAP = average_precision_score(
+                        label_actor_list[:, 48:56],
+                        map_pred_actor_list[:, 48:56].astype(np.float32),
+                        )
+                group_c_mAP = average_precision_score(
+                        label_actor_list[:, 12:24],
+                        map_pred_actor_list[:, 12:24].astype(np.float32)
+                        )
+                group_b_mAP = average_precision_score(
+                        label_actor_list[:, 36:48],
+                        map_pred_actor_list[:, 36:48].astype(np.float32)
+                        )
+                group_p_mAP = average_precision_score(
+                        label_actor_list[:, 56:64],
+                        map_pred_actor_list[:, 56:64].astype(np.float32),
+                        )
+                mAP_per_class = average_precision_score(
+                        label_actor_list,
+                        map_pred_actor_list.astype(np.float32),	
+                        average=None)
+
+                print(f'(val) mAP: {mAP}')
+                print(f'(val) mAP of the c: {c_mAP}')
+                print(f'(val) mAP of the b: {b_mAP}')
+                print(f'(val) mAP of the p: {p_mAP}')
+                print(f'(val) mAP of the c+: {group_c_mAP}')
+                print(f'(val) mAP of the b+: {group_b_mAP}')
+                print(f'(val) mAP of the p+: {group_p_mAP}')
+
+                print(f'acc of the ego: {self.correct_ego/self.total_ego}')
+                writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
+                if mAP > self.best_mAP:
+                    self.best_mAP = mAP
+                    self.best_log = [
+                        f'(val) mAP: {mAP}',
+                        f'(val) mAP of the c: {c_mAP}',
+                        f'(val) mAP of the b: {b_mAP}',
+                        f'(val) mAP of the p: {p_mAP}',
+                        f'(val) mAP of the c+: {group_c_mAP}',
+                        f'(val) mAP of the b+: {group_b_mAP}',
+                        f'(val) mAP of the p+: {group_p_mAP}'
+                    ]
+                    save_cp = True
+                print(f'best mAP : {self.best_mAP}')
+
+                with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
+                    f.write('epoch: ' + str(self.cur_epoch))
+                    f.write('\n')
+                    f.write('best mAP: %.4f' % self.best_mAP)
+                    f.write('\n')
+                    f.write('mAP: %.4f' % mAP)
+                    f.write('\n')
+                    f.write('mAP of c: %.4f' % c_mAP)
+                    f.write('\n')
+                    f.write('mAP of b: %.4f' % b_mAP)
+                    f.write('\n')
+                    f.write('mAP of p: %.4f' % p_mAP)
+                    f.write('\n')
+                    f.write('mAP of c+: %.4f' % group_c_mAP)
+                    f.write('\n')
+                    f.write('mAP of b+: %.4f' % group_b_mAP)
+                    f.write('\n')
+                    f.write('mAP of p+: %.4f' % group_p_mAP)
+                    f.write('\n')
+
+                    f.write('c per class: + \n')
+                    for ap in mAP_per_class[:12].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+                    f.write('b per class: \n')
+                    for ap in mAP_per_class[12:24].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+                    f.write('c+ per class: \n')
+                    for ap in mAP_per_class[24:36].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+                    f.write('b+ per class: \n')
+                    for ap in mAP_per_class[36:48].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+                    f.write('p per class: \n')
+                    for ap in mAP_per_class[48:56].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+                    f.write('p+ per class: \n')
+                    for ap in mAP_per_class[56:64].tolist():
+                        f.write("%.4f " % ap)
+                    f.write('\n')
+                    f.write('*'*15 + '\n')
+            
             total_loss = self.loss_epoch / float(self.num_batches)
             tqdm.write(f'Epoch {self.cur_epoch:03d} Loss: {total_loss:3.3f}')            
             self.val_loss.append(total_loss)
@@ -446,7 +585,11 @@ if __name__ == '__main__':
     seq_len = args.seq_len
 
     num_ego_class = 4
-    num_actor_class = 6
+    num_actor_class = 64
+    if args.taco_class == 'Action':
+        num_actor_class = 20
+    elif args.taco_class == 'Object':
+        num_actor_class = 6
 
     print('initialize train set')
     train_set = TACO(args=args, split='train')

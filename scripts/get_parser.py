@@ -66,6 +66,8 @@ def get_parser():
     parser.add_argument('--test', help="", action="store_true")
     parser.add_argument('--gt', help="", action="store_true")
 
+    # taco classes
+    parser.add_argument('--taco_class', type= str, default= 'both', help= 'Set taco class')
 
     args = parser.parse_args()
 

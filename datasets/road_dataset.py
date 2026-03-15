@@ -88,7 +88,7 @@ class ROAD(Dataset):
                         }
         ego_stat = {'1': 0,'2': 0, '3':0, '4': 0}
 
-
+        
         if self.training:
             video_list = train_video_list
         else:
@@ -312,6 +312,8 @@ def get_multi_class(ego_gt, actor_gt, actor_stat_table, ped_stat, ego_stat, num_
                     'c32': 16, 'c34': 17, 
                     'c41': 18, 'c43': 19 
                     }
+
+
 
     ego_class = ego_table[ego_gt]
     ego_stat[ego_gt] +=1

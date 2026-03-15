@@ -879,7 +879,7 @@ torch.cuda.empty_cache()
 seq_len = args.seq_len
 
 num_ego_class = 4
-num_actor_class = 20
+num_actor_class = 6
 
 
 # Data
