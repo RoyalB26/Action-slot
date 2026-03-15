@@ -54,8 +54,14 @@ To participate in the challenge, you only need to compress the generated .pkl fi
 Training
 ```
 # Action-slot
+Objects and Actions:
 python train_taco.py --dataset taco --root [path_to_TACO] --model_name action_slot --num_slots 64 --bg_slot --bg_mask --action_attn_weight 1 --allocated_slot --bg_attn_weight 0.5
 
+Only Objects:
+python train_taco.py --dataset taco --root /home/jovyan/TACO --model_name action_slot --num_slots 6 --bg_slot --bg_mask --action_attn_weight 1 --allocated_slot --bg_attn_weight 0.5 --taco_class Object
+
+Only Actions:
+python train_taco.py --dataset taco --root /home/jovyan/TACO --model_name action_slot --num_slots 20 --bg_slot --bg_mask --action_attn_weight 1 --allocated_slot --bg_attn_weight 0.5 --batch_size 12 --num_workers 8 --taco_class Action
 # X3D
 python train_taco.py --dataset taco --root [path_to_TACO] --model_name x3d 
 ```
@@ -63,8 +69,16 @@ python train_taco.py --dataset taco --root [path_to_TACO] --model_name x3d
 Evaluation
 ```
 # Action-slot
+Remember to put right model in weight folder
+
+Objects and Actions:
 python eval_taco.py --cp [path_to_checkpoint] --root [path_to_TACO] --dataset taco --model_name action_slot --num_slots 64 --bg_slot --allocated_slot
 
+Only Objects:
+python eval_taco.py --cp ../weights/best_model.pth --root /home/jovyan/TACO --dataset taco --model_name action_slot --num_slots 6 --bg_slot --allocated_slot --taco_class Object
+
+Only Actions:
+python eval_taco.py --cp ../weights/best_model.pth --root /home/jovyan/TACO --dataset taco --model_name action_slot --num_slots 20 --bg_slot --allocated_slot --taco_class Action
 # X3D
 python eval_taco.py --root [path_to_TACO] --cp [path_to_checkpoint] --dataset taco --model_name x3d 
 ```
