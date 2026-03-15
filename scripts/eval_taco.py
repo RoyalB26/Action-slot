@@ -62,7 +62,11 @@ actor_table = ['c:z1-z2', 'c:z1-z3', 'c:z1-z4',
                 'p+:c3-c2', 'p+:c3-c4', 
                 'p+:c4-c1', 'p+:c4-c3',
                 'bg'] 
-                    
+
+objects_table= {'c': 0, 'c+': 1,
+                'b': 2, 'b+': 3,
+                'p':4, 'p+': 5}
+                
 def generate_distinct_colors(num_colors):
     colors = []
     for i in range(num_colors):
@@ -89,7 +93,7 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
         for i, a in enumerate(actor):
             if a.data == 1.0:
                 num_pos += 1
-                actor_str += actor_table[i]
+                actor_str += objects_table[i]
                 if pred_actor[i].data == True:
                     actor_str += '  TP'
                     num_tp +=1
@@ -98,10 +102,10 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
                     num_fn +=1
             else:
                 if pred_actor[i].data == True:
-                    actor_str += actor_table[i] 
+                    actor_str += objects_table[i] 
                     actor_str += '                  FP'
                 else:
-                    actor_str += actor_table[i] 
+                    actor_str += objects_table[i] 
                     actor_str += '                          TN'
             actor_str +='\n'
         # if num_pos < num_tp and model_name == 'action_slot':
@@ -600,36 +604,34 @@ class Engine(object):
                     map_pred_actor_list.astype(np.float32),
                     )
             c_mAP = average_precision_score(
-                    label_actor_list[:, :12],
-                    map_pred_actor_list[:, :12].astype(np.float32)
+                    label_actor_list[:, :1],
+                    map_pred_actor_list[:, :1].astype(np.float32)
                     )
             b_mAP = average_precision_score(
-                    label_actor_list[:, 24:36],
-                    map_pred_actor_list[:, 24:36].astype(np.float32)
+                    label_actor_list[:, 2:3],
+                    map_pred_actor_list[:, 2:3].astype(np.float32)
                     )
             p_mAP = average_precision_score(
-                    label_actor_list[:, 48:56],
-                    map_pred_actor_list[:, 48:56].astype(np.float32),
+                    label_actor_list[:, 4:5],
+                    map_pred_actor_list[:, 4:5].astype(np.float32),
                     )
             group_c_mAP = average_precision_score(
-                    label_actor_list[:, 12:24],
-                    map_pred_actor_list[:, 12:24].astype(np.float32)
+                    label_actor_list[:, 1:2],
+                    map_pred_actor_list[:, 1:2].astype(np.float32)
                     )
             group_b_mAP = average_precision_score(
-                    label_actor_list[:, 36:48],
-                    map_pred_actor_list[:, 36:48].astype(np.float32)
+                    label_actor_list[:, 3:4],
+                    map_pred_actor_list[:, 3:4].astype(np.float32)
                     )
             group_p_mAP = average_precision_score(
-                    label_actor_list[:, 56:64],
-                    map_pred_actor_list[:, 56:64].astype(np.float32),
+                    label_actor_list[:, 5:6],
+                    map_pred_actor_list[:, 5:6].astype(np.float32),
                     )
             mAP_per_class = average_precision_score(
                     label_actor_list,
                     map_pred_actor_list.astype(np.float32), 
                     average=None)
 
-            for i, ap in enumerate(mAP_per_class):
-                mAP_per_class[i] = np.round(ap, 3)*100
             print(f'(val) mAP of the actor: {mAP}')
             print(f'(val) mAP of the c: {c_mAP}')
             print(f'(val) mAP of the b: {b_mAP}')
@@ -637,13 +639,6 @@ class Engine(object):
             print(f'(val) mAP of the c+: {group_c_mAP}')
             print(f'(val) mAP of the b+: {group_b_mAP}')
             print(f'(val) mAP of the p+: {group_p_mAP}')
-
-            print(f'(val) AP of the c: {mAP_per_class[:12]}')
-            print(f'(val) AP of the c+: {mAP_per_class[12:24]}')
-            print(f'(val) AP of the k: {mAP_per_class[24:36]}')
-            print(f'(val) AP of the k+: {mAP_per_class[36:48]}')
-            print(f'(val) AP of the p: {mAP_per_class[48:56]}')
-            print(f'(val) AP of the p+: {mAP_per_class[56:64]}')
 
             print('**********************')
             print(f'acc of the ego: {correct_ego/total_ego}')
@@ -658,7 +653,7 @@ if __name__ == "__main__":
     torch.cuda.empty_cache() 
     seq_len = args.seq_len
     num_ego_class = 4
-    num_actor_class = 64
+    num_actor_class = 6
 
     # Data
     val_set = taco.TACO(args=args, split='val')

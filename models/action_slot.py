@@ -154,7 +154,7 @@ class ACTION_SLOT(nn.Module):
         if args.dataset == 'nuscenes' and args.pretrain == 'oats':
             self.num_slots = 35
         if args.dataset == 'oats' and args.pretrain == 'taco':
-            self.num_slots = 64
+            self.num_slots = 6
         # if args.dataset == 'nuscenes' and args.pretrain == 'taco':
         #     self.num_slots = 93
         self.resnet = i3d_r50(True)
