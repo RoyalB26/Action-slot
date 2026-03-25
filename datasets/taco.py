@@ -43,11 +43,7 @@ class TACO(Dataset):
 
         self.step = []
         self.start_idx = []
-        self.num_class = 64
-        if args.taco_class == 'Action':
-            self.num_class = 20
-        elif args.taco_class == 'Object':
-            self.num_class = 6
+        self.num_class = 20  # Always action-only
         self.max_num_obj = []
         
         self.Max_N = Max_N
@@ -62,32 +58,36 @@ class TACO(Dataset):
 
 
         n=0
-        specific= ''
-        if args.taco_class == 'Action':
-            specific= 'action_'
-        elif args.taco_class == 'Object':
-            specific= 'object_'
-        f = open('../datasets/taco_'+split+'_data.json')
+        specific= 'action_'  # Always use action labels
+
+        # Preference: use root path for dataset metadata where user stores data (C:\TACO)
+        # If not found, fallback to repository datasets folder
+        path_data_json = os.path.join(args.root, 'taco_'+split+'_data.json')
+        path_label_json = os.path.join(args.root, 'taco_'+specific+split+'_label.json')
+        if not os.path.isfile(path_data_json):
+            path_data_json = os.path.join(os.path.dirname(__file__), 'taco_'+split+'_data.json')
+        if not os.path.isfile(path_label_json):
+            path_label_json = os.path.join(os.path.dirname(__file__), 'taco_'+specific+split+'_label.json')
+
+        f = open(path_data_json)
         scenario_list = json.load(f)
-        f_label = open('../datasets/taco_'+ specific + split+'_label.json')
+        f_label = open(path_label_json)
         label_list = json.load(f_label)
         for scenario in tqdm(scenario_list):
-            if not scenario in label_list:
+            if scenario not in label_list:
                 continue
             gt = label_list[scenario]
-                    
-
-            # ------------get labels-------------
-            # get multi-instance multi-class labels for object-aware methods
-            if self.args.box:
-                proposal_train_label, gt_ego, gt_actor = get_labels(args, gt, num_slots=self.Max_N)
-            # get multi-instance multi-class labelsfor non-allocated slot-based methods
-            elif 'slot' in args.model_name and not args.allocated_slot:
-                proposal_train_label, gt_ego, gt_actor = get_labels(args, gt, num_slots=args.num_slots)
-            # get multi-label for allocated slot-based and video-level methods
-            else:
-                gt_ego, gt_actor = get_labels(args, gt, num_slots=args.num_slots)
-
+            try:
+                # ------------get labels-------------
+                if self.args.box:
+                    proposal_train_label, gt_ego, gt_actor = get_labels(args, gt, num_slots=self.Max_N)
+                elif 'slot' in args.model_name and not args.allocated_slot:
+                    proposal_train_label, gt_ego, gt_actor = get_labels(args, gt, num_slots=args.num_slots)
+                else:
+                    gt_ego, gt_actor = get_labels(args, gt, num_slots=args.num_slots)
+            except Exception as e:
+                print('Error in scenario', scenario, ':', e)
+                raise
 
             # ------------statistics-------------
             if torch.count_nonzero(gt_actor) > max_num_label_a_video:
@@ -394,8 +394,8 @@ class TACO(Dataset):
                     if self.args.bg_mask and i %self.args.mask_every_frame == 0:
                         data['bg_seg'].append(Image.open(seq_seg[i]).convert('L'))
                 if self.args.obj_mask:
-                    if self.args.obj_mask and i %self.args.mask_every_frame == 0 or (self.args.plot and self.args.plot_mode==''):
-                        data['obj_masks'].append(get_obj_mask(obj_masks_list[i]))
+                    if self.args.obj_mask and i % self.args.mask_every_frame == 0 or (self.args.plot and self.args.plot_mode==''):
+                        data['obj_masks'].append(get_obj_mask(obj_masks_list[i], num_class=self.num_class))
         if self.args.plot:
             data['raw'] = to_np_no_norm(data['raw'])
     
@@ -404,17 +404,18 @@ class TACO(Dataset):
         return data
 
 
-def get_obj_mask(obj_path):
+def get_obj_mask(obj_path, num_class=20):
     obj_masks = np.load(obj_path)
     # obj_masks = list(seg_dict.values())
     if obj_masks.shape[0] == 0:
-        obj_masks = torch.zeros([self.num_class, 32, 96], dtype=torch.int32)
+        obj_masks = torch.zeros([num_class, 32, 96], dtype=torch.int32)
     else:
         obj_masks = torch.from_numpy(np.stack(obj_masks, 0))
     # img = torch.flip(torch.from_numpy(img).type(torch.int).permute(2,0,1),[0])
     obj_masks = obj_masks.type(torch.int)
-    pad_num = self.num_class - obj_masks.shape[0]
-    obj_masks = torch.cat((obj_masks, torch.zeros([pad_num, 32, 96], dtype=torch.int32)), dim=0)
+    pad_num = num_class - obj_masks.shape[0]
+    if pad_num > 0:
+        obj_masks = torch.cat((obj_masks, torch.zeros([pad_num, 32, 96], dtype=torch.int32)), dim=0)
     obj_masks = obj_masks.type(torch.float32)
 
     return obj_masks
@@ -455,11 +456,7 @@ def to_np_no_norm(v):
     return v
 
 def get_labels(args, gt, num_slots=6):
-    num_class= 64   
-    if args.taco_class == 'Action':
-        num_class = 20
-    elif args.taco_class == 'Object':
-        num_class = 6
+    num_class= 20  # Always action-only now
     model_name = args.model_name
     allocated_slot = args.allocated_slot
     agent_label = gt['agents']
@@ -467,7 +464,20 @@ def get_labels(args, gt, num_slots=6):
 
     ego_table = {'e:z1-z1': 0, 'e:z1-z2': 1, 'e:z1-z3':2, 'e:z1-z4': 3}
 
-    actor_table = { 'c:z1-z2': 0, 'c:z1-z3':1, 'c:z1-z4':2,
+    # Action-only table, mapping from object:action to action
+    actor_table = {'z1-z2': 0, 'z1-z3': 1, 'z1-z4': 2,
+                   'z2-z1': 3, 'z2-z3': 4, 'z2-z4': 5,
+                   'z3-z1': 6, 'z3-z2': 7, 'z3-z4': 8,
+                   'z4-z1': 9, 'z4-z2': 10, 'z4-z3': 11,
+                   'c1-c2': 12, 'c1-c4': 13,
+                   'c2-c1': 14, 'c2-c3': 15,
+                   'c3-c2': 16, 'c3-c4': 17,
+                   'c4-c1': 18, 'c4-c3': 19}
+
+    # If input is 64-d (both), map to 20-d action
+    if len(agent_label) == 64:
+        # Original both table for mapping
+        original_actor_table = { 'c:z1-z2': 0, 'c:z1-z3':1, 'c:z1-z4':2,
                     'c:z2-z1': 3, 'c:z2-z3': 4, 'c:z2-z4': 5,
                     'c:z3-z1': 6, 'c:z3-z2': 7, 'c:z3-z4': 8,
                     'c:z4-z1': 9, 'c:z4-z2': 10, 'c:z4-z3': 11,
@@ -499,26 +509,31 @@ def get_labels(args, gt, num_slots=6):
                     'p+:c4-c1': 62, 'p+:c4-c3': 63 
                     }
 
-    objects_table= {'c': 0, 'c+': 1,
-                    'b': 2, 'b+': 3,
-                    'p':4, 'p+': 5}
+        mapped_agent_label = [0.0] * len(actor_table)
+        for idx, value in enumerate(agent_label):
+            if value > 0:
+                key = list(original_actor_table.keys())[idx]
+                if ':' in key:
+                    action_key = key.split(':', 1)[1]
+                else:
+                    action_key = key
+                if action_key in actor_table:
+                    mapped_idx = actor_table[action_key]
+                    mapped_agent_label[mapped_idx] = 1.0
+        agent_label = mapped_agent_label
+    elif len(agent_label) == len(actor_table):
+        agent_label = agent_label  # Already action-only
+    else:
+        raise ValueError(f"Unexpected agent_label length: {len(agent_label)}")
 
-    actions_table= {'z1-z2': 0, 'z1-z3': 1, 'z1-z4': 2,
-                'z2-z1': 3, 'z2-z3': 4, 'z2-z4': 5,
-                'z3-z1': 6, 'z3-z2': 7, 'z3-z4': 8,
-                'z4-z1': 9, 'z4-z2': 10, 'z4-z3': 11,
-                'c1-c2': 12, 'c1-c4': 13,
-                'c2-c1': 14, 'c2-c3': 15,
-                'c3-c2': 16, 'c3-c4': 17,
-                'c4-c1': 18, 'c4-c3': 19}
-
-
-    ego_label = torch.tensor(ego_label)
+    ego_label = torch.tensor(ego_label, dtype=torch.long)
     agent_label = torch.FloatTensor(agent_label)
+
     proposal_train_label = []
     if ('slot' in model_name and not allocated_slot) or 'ARG'in model_name or 'ORN'in model_name:
-        proposal_train_label = matches = [x for x in agent_label if x > 0]
-        while (len(proposal_train_label)!= num_slots):
+        # Convert to Python ints before building tensor
+        proposal_train_label = [int(x.item()) for x in agent_label if float(x.item()) > 0]
+        while len(proposal_train_label) != num_slots:
             proposal_train_label.append(num_class)
         proposal_train_label = torch.LongTensor(proposal_train_label)
         return proposal_train_label, ego_label, agent_label

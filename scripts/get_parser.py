@@ -67,7 +67,7 @@ def get_parser():
     parser.add_argument('--gt', help="", action="store_true")
 
     # taco classes
-    parser.add_argument('--taco_class', type= str, default= 'both', help= 'Set taco class')
+    parser.add_argument('--taco_class', type= str, default= 'Action', help= 'Set taco class')
 
     args = parser.parse_args()
 
@@ -165,4 +165,19 @@ def get_parser():
 
     if args.model_index != -1:
         logdir = logdir + '\n' + 'idx: ' + str(args.model_index)
+
+    # Windows path length can be very strict when TensorBoard uses logdir.
+    # Use a shorter stable naming scheme for directories to avoid WinError 206.
+    if os.name == 'nt' or len(logdir) > 120:
+        safe_name = f"{args.dataset}_{args.model_name}_{args.backbone}_slots{args.num_slots}"
+        if args.box:
+            safe_name += '_box'
+        if args.allocated_slot:
+            safe_name += '_alloc'
+        if args.obj_mask:
+            safe_name += '_objmask'
+        logdir = os.path.join(based_log, safe_name)
+        if not os.path.isdir(logdir):
+            os.makedirs(logdir)
+
     return args, logdir
