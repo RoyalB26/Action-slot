@@ -623,7 +623,61 @@ class Engine(object):
             print(f'acc of the ego: {correct_ego/total_ego}')
             print('**********************')
 
-            # print(num_selected_sample)
+            # Benchmark section
+            print('\n=== BENCHMARK RESULTS ===')
+            print(f'Overall mAP: {mAP:.4f}')
+            print(f'z actions mAP: {z_mAP:.4f}')
+            print(f'c actions mAP: {c_mAP:.4f}')
+
+            # Calculate additional metrics
+            from sklearn.metrics import f1_score, classification_report
+
+            # Convert to binary predictions for F1 (threshold at 0.5)
+            pred_binary = (map_pred_actor_list > 0.5).astype(int)
+            label_binary = label_actor_list.astype(int)
+
+            # Macro F1 (average across classes)
+            macro_f1 = f1_score(label_binary, pred_binary, average='macro', zero_division=0)
+            micro_f1 = f1_score(label_binary, pred_binary, average='micro', zero_division=0)
+
+            print(f'Macro F1-score: {macro_f1:.4f}')
+            print(f'Micro F1-score: {micro_f1:.4f}')
+
+            # Per-class F1 for z and c
+            z_f1 = f1_score(label_binary[:, :12], pred_binary[:, :12], average='macro', zero_division=0)
+            c_f1 = f1_score(label_binary[:, 12:20], pred_binary[:, 12:20], average='macro', zero_division=0)
+            print(f'z actions Macro F1: {z_f1:.4f}')
+            print(f'c actions Macro F1: {c_f1:.4f}')
+
+            # Random baseline comparison
+            np.random.seed(42)
+            random_pred = np.random.rand(*map_pred_actor_list.shape)
+            random_mAP = average_precision_score(label_actor_list, random_pred.astype(np.float32))
+            print(f'\nRandom Baseline mAP: {random_mAP:.4f}')
+            print(f'Improvement over random: {(mAP - random_mAP):.4f} ({((mAP - random_mAP)/max(random_mAP, 1e-6)*100):.1f}%)')
+
+            # Save benchmark results
+            benchmark_results = {
+                'mAP': float(mAP),
+                'z_mAP': float(z_mAP),
+                'c_mAP': float(c_mAP),
+                'macro_f1': float(macro_f1),
+                'micro_f1': float(micro_f1),
+                'z_f1': float(z_f1),
+                'c_f1': float(c_f1),
+                'random_baseline_mAP': float(random_mAP),
+                'improvement_over_random': float(mAP - random_mAP),
+                'ego_accuracy': float(correct_ego/total_ego),
+                'per_class_mAP': mAP_per_class.tolist()
+            }
+
+            import json
+            benchmark_file = os.path.join(os.path.dirname(args.cp), 'benchmark_results.json')
+            with open(benchmark_file, 'w') as f:
+                json.dump(benchmark_results, f, indent=2)
+            print(f'Benchmark results saved to: {benchmark_file}')
+
+            print('=== END BENCHMARK ===\n')
 
 if __name__ == "__main__":
     torch.cuda.empty_cache()

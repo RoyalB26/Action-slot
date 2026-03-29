@@ -1,0 +1,19 @@
+{
+  "action_slot_x3d_baseline": {
+    "path": "taco_log/action_slot/taco_action_slot_x3d_slots21/best_model.pth",
+    "description": "Action-slot model with X3D backbone, 21 slots",
+    "backbone": "x3d",
+    "num_slots": 21
+  },
+  "action_slot_x3d_fewer_slots": {
+    "path": "taco_log/action_slot/taco_action_slot_x3d_slots16/best_model.pth",
+    "description": "Action-slot model with X3D backbone, 16 slots",
+    "backbone": "x3d",
+    "num_slots": 16
+  },
+  "random_baseline": {
+    "path": null,
+    "description": "Random baseline (no model)",
+    "type": "baseline"
+  }
+}
