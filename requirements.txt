@@ -1,12 +1,12 @@
 absl-py==2.3.1
 annotated-doc==0.0.4
 anyio==4.12.1
-av @ file:///D:/bld/av_1696983706307/work
-Brotli @ file:///D:/bld/brotli-split_1749229870877/work
+av 
+Brotli 
 carla==0.9.15
-certifi @ file:///home/conda/feedstock_root/build_artifacts/certifi_1754231422783/work/certifi
-cffi @ file:///D:/bld/cffi_1725560792189/work
-charset-normalizer @ file:///home/conda/feedstock_root/build_artifacts/charset-normalizer_1754767332901/work
+certifi 
+cffi 
+charset-normalizer 
 click==8.1.8
 colorama==0.4.6
 contourpy==1.3.0
@@ -18,14 +18,14 @@ fsspec==2025.10.0
 fvcore==0.1.5.post20221221
 grpcio==1.78.0
 h11==0.16.0
-h2 @ file:///home/conda/feedstock_root/build_artifacts/h2_1738578511449/work
+h2 
 hf-xet==1.4.2
-hpack @ file:///home/conda/feedstock_root/build_artifacts/hpack_1737618293087/work
+hpack 
 httpcore==1.0.9
 httpx==0.28.1
 huggingface_hub==1.8.0
-hyperframe @ file:///home/conda/feedstock_root/build_artifacts/hyperframe_1737618333194/work
-idna @ file:///home/conda/feedstock_root/build_artifacts/idna_1733211830134/work
+hyperframe 
+idna
 importlib_metadata==8.7.1
 importlib_resources==6.5.2
 iopath==0.1.10
