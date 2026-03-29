@@ -31,10 +31,10 @@ importlib_resources==6.5.2
 iopath==0.1.10
 Jinja2==3.1.6
 joblib==1.5.3
-jsonpatch @ file:///home/conda/feedstock_root/build_artifacts/jsonpatch_1733814567314/work
-jsonpointer @ file:///D:/bld/jsonpointer_1725302964849/work
+jsonpatch 
+jsonpointer 
 kiwisolver==1.4.7
-lap @ file:///D:/bld/lap_1650201541914/work
+lap 
 Markdown==3.9
 markdown-it-py==3.0.0
 MarkupSafe==3.0.2
@@ -47,26 +47,25 @@ opencv-python-headless==4.8.0.76
 packaging==26.0
 pandas==2.3.3
 parameterized==0.9.0
-pillow @ file:///D:/bld/pillow_1751481993665/work
+pillow 
 portalocker==3.2.0
 protobuf==6.33.6
 ptflops==0.7.5
-pycparser @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pycparser_1733195786/work
+pycparser
 Pygments==2.19.2
 pyparsing==3.3.2
-PySocks @ file:///D:/bld/pysocks_1733217287171/work
+PySocks 
 python-dateutil==2.9.0.post0
 pytorchvideo==0.1.5
 pytz==2026.1.post1
 pywin32==311
 PyYAML==6.0.3
-requests @ file:///home/conda/feedstock_root/build_artifacts/requests_1755614211359/work
+requests
 rich==14.3.3
 safetensors==0.7.0
 scikit-learn==1.6.1
-scipy @ file:///C:/bld/scipy-split_1716470385682/work/dist/scipy-1.13.1-cp39-cp39-win_amd64.whl#sha256=490e922ef930c40e74290d95915a98295b9059d02849059317bab82ba7810581
-shellingham==1.5.4
-six @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_six_1753199211/work
+scipy 
+six 
 sympy==1.13.1
 tabulate==0.9.0
 tensorboard==2.20.0
@@ -77,16 +76,16 @@ timm==1.0.26
 torch==2.5.1+cu121
 torchaudio==2.5.1+cu121
 torchvision==0.20.1+cu121
-tornado @ file:///D:/bld/tornado_1754732005081/work
+tornado
 tqdm==4.67.3
 typer==0.23.2
 typing_extensions==4.15.0
 tzdata==2025.3
-urllib3 @ file:///home/conda/feedstock_root/build_artifacts/urllib3_1750271362675/work
-visdom @ file:///home/conda/feedstock_root/build_artifacts/visdom_1677944195650/work
-websocket-client @ file:///home/conda/feedstock_root/build_artifacts/websocket-client_1733157342724/work
+urllib3
+visdom 
+websocket-client 
 Werkzeug==3.1.7
-win_inet_pton @ file:///D:/bld/win_inet_pton_1733130564612/work
+win_inet_pton 
 yacs==0.1.8
 zipp==3.23.0
 zstandard==0.23.0
