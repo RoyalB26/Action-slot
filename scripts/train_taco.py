@@ -70,12 +70,13 @@ class Engine(object):
         
     """
 
-    def __init__(self, args, model, optimizer, num_actor_class, scheduler=None):
+    def __init__(self, args, model, optimizer, num_actor_class, accelerator, scheduler=None):
         self.args = args
   
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.accelerator = accelerator
         self.num_actor_class = num_actor_class
         if hasattr(self.model, 'resolution'):
             attention_res = (self.model.resolution[0]*args.bg_upsample, self.model.resolution[1]*args.bg_upsample)
@@ -206,7 +207,7 @@ class Engine(object):
         
         if mode == 'train':
             self.optimizer.zero_grad()
-            loss.backward()
+            self.accelerator.backward(loss)
             self.optimizer.step()
             if self.scheduler is not None:
                 self.scheduler.step()
@@ -613,7 +614,7 @@ if __name__ == '__main__':
 
     # -----------	
     model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)
-    trainer = Engine(args,model,optimizer,num_actor_class,scheduler)
+    trainer = Engine(args,model,optimizer,num_actor_class,accelerator, scheduler)
     # Create logdir
     print(f'Checkpoint path: {logdir}')
 

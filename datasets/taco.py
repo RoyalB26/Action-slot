@@ -60,7 +60,8 @@ class TACO(Dataset):
         total_frame = 0
         total_videos = 0
 
-
+        if split == 'train':
+            return
         n=0
         specific= ''
         if args.taco_class == 'Action':
