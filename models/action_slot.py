@@ -10,6 +10,8 @@ import r50
 import numpy as np
 from math import ceil 
 from ptflops import get_model_complexity_info
+from deformable_DETR import SpatioTemporalDeformableAttention
+
 
 class SlotAttention(nn.Module):
     def __init__(self, num_slots, dim, num_actor_class=64, eps=1e-8, input_dim=64, resolution=[16, 8, 24], allocated_slot=True):
@@ -225,7 +227,7 @@ class ACTION_SLOT(nn.Module):
         #     self.num_slots = 93
         self.resnet = i3d_r50(True)
         self.args = args
-        self.temporal_attn = TemporalSelfAttention(self.slot_dim)
+        self.temporal_attn = SpatioTemporalDeformableAttention(self.slot_dim)
 
         if args.backbone == 'r50':
             self.resnet = r50.R50()
