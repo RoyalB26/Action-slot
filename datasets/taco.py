@@ -76,13 +76,19 @@ class TACO(Dataset):
 
 
         group_rules = {
-            "part4": ["ap_Town10HD"],
+            "2part": ["ap_Town10HD"],
             "part3": ["ap_Town03", "ap_Town04", "ap_Town6", "ap_Town07"],
             "part2": ["ap_Town01", "ap_Town05", "interactive"],
             "part1": ["ap_Town02", "non-interactive", "runner_Town03", "runner_Town05", "runner_Town10HD"]
         }
 
+        group_rules2 = {
+            "part4": ["i1", "t1", "t2", "t3"],
+            "part5": ["i4", "t5", "t6", "t7"]
+        }
+
         mapping = {item: part for part, items in group_rules.items() for item in items}
+        mapping2 = {item: part for part, items in group_rules2.items() for item in items}
 
         for scenario in tqdm(scenario_list):
             if not scenario in label_list:
@@ -114,7 +120,10 @@ class TACO(Dataset):
                 video_folder = video_folder[0]
 
             parent_folder, basic, variant = scenario.split('/')
-            root= "/kaggle/input/datasets/royalb26/taco-dataset-" + mapping[parent_folder] + f"/Bn sao ca {parent_folder}"
+            folder_part= mapping[parent_folder]
+            root= "/kaggle/input/datasets/royalb26/taco-dataset-" + folder_part + f"/Bn sao ca {parent_folder}"
+            if folder_part == '2part':
+                root= "/kaggle/input/datasets/royalb26/taco-dataset-" + mapping[basic]
             scenario_path = os.path.join(root,parent_folder,basic,'variant_scenario',variant)
             video_folder_path = os.path.join(scenario_path,'rgb',video_folder)
             if os.path.isdir(video_folder_path):
