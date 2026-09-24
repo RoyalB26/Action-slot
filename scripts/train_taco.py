@@ -30,7 +30,7 @@ from datasets.taco import TACO
 from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
-
+from accelerate import Accelerator
 def plot_result(result,args):
     """
         result : mAP, loss,
@@ -589,7 +589,7 @@ if __name__ == '__main__':
         num_actor_class = 20
     elif args.taco_class == 'Object':
         num_actor_class = 6
-
+    accelerator = Accelerator()
     print('initialize train set')
     train_set = TACO(args=args, split='train')
     print('initialize val set')
@@ -612,8 +612,8 @@ if __name__ == '__main__':
         scheduler = None
 
     # -----------	
+    model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)
     trainer = Engine(args,model,optimizer,num_actor_class,scheduler)
-
     # Create logdir
     print(f'Checkpoint path: {logdir}')
 
