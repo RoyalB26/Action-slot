@@ -68,9 +68,22 @@ class TACO(Dataset):
         elif args.taco_class == 'Object':
             specific= 'object_'
         f = open('../datasets/taco_'+split+'_data.json')
-        scenario_list = json.load(f)
+
+        scenario_list= json.load(f)
+
         f_label = open('../datasets/taco_'+ specific + split+'_label.json')
         label_list = json.load(f_label)
+
+
+        group_rules = {
+            "part4": ["ap_Town10HD"],
+            "part3": ["ap_Town03", "ap_Town04", "ap_Town6", "ap_Town07"],
+            "part2": ["ap_Town01", "ap_Town05", "interactive"],
+            "part1": ["ap_Town02", "non-interactive", "runner_Town03", "runner_Town05", "runner_Town10HD"]
+        }
+
+        mapping = {item: part for part, items in group_rules.items() for item in items}
+
         for scenario in tqdm(scenario_list):
             if not scenario in label_list:
                 continue
@@ -101,6 +114,7 @@ class TACO(Dataset):
                 video_folder = video_folder[0]
 
             parent_folder, basic, variant = scenario.split('/')
+            root= "/kaggle/input/datasets/royalb26/taco-dataset-" + mapping[parent_folder]
             scenario_path = os.path.join(root,parent_folder,basic,'variant_scenario',variant)
             video_folder_path = os.path.join(scenario_path,'rgb',video_folder)
             if os.path.isdir(video_folder_path):

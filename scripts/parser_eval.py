@@ -64,8 +64,8 @@ def get_eval_parser():
     if args.model_name in ['action_slot', 'slot_savi', 'slot_mo', 'slot_vps']:
         logdir = os.path.join(
             based_log,
-            'num_slots: ' + str(args.num_slots) + '\n'
-            +'obj_mask: ' + str(args.obj_mask) 
+            'num_slots' + str(args.num_slots) + '_'
+            +'obj_mask' + str(args.obj_mask) 
             )
     else:
         logdir = based_log

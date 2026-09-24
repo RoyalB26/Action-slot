@@ -140,6 +140,72 @@ class SoftPositionEmbed3D(nn.Module):
         grid = self.embedding(self.grid)
         return inputs + grid
 
+class TemporalSelfAttention(nn.Module):
+    def __init__(self, dim, num_heads=4, qkv_bias=False, drop=0.0):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        assert dim % num_heads == 0, "num_heads has to devides dim"
+
+        self.norm = nn.LayerNorm(dim)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(drop)
+
+        # Feed-Forward Network (FFN)
+        self.norm_ffn = nn.LayerNorm(dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * 2),
+            nn.GELU(),
+            nn.Dropout(drop),
+            nn.Linear(dim * 2, dim),
+            nn.Dropout(drop)
+        )
+
+    def forward(self, x):
+        """
+        Args:
+            x: tensor[B, T, H, W, D] 
+        Returns:
+            tensor[B, T, H, W, D]
+        """
+        B, T, H, W, D = x.shape
+        residual = x
+
+
+        x_norm = self.norm(x)
+
+
+        # [B, T, H, W, D] -> [B, H, W, T, D] -> [B * H * W, T, D]
+        x_temp = x_norm.permute(0, 2, 3, 1, 4).reshape(B * H * W, T, D)
+
+
+        # [B * H * W, T, 3 * D] -> [B * H * W, T, 3, num_heads, head_dim]
+        qkv = self.qkv(x_temp).reshape(B * H * W, T, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4) # [3, B * H * W, num_heads, T, head_dim]
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # dots: [B * H * W, num_heads, T, T]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+
+        # out: [B * H * W, num_heads, T, head_dim] -> [B * H * W, T, D]
+        out = (attn @ v).transpose(1, 2).reshape(B * H * W, T, D)
+        out = self.proj_drop(self.proj(out))
+
+        out = out.view(B, H, W, T, D).permute(0, 3, 1, 2, 4)
+
+        # Residual connection 1
+        x = residual + out
+
+        # Residual connection 2 (FFN)
+        x = x + self.ffn(self.norm_ffn(x))
+
+        return x
+
 class ACTION_SLOT(nn.Module):
     def __init__(self, args, num_ego_class, num_actor_class, num_slots=21, box=False, videomae=None):
         super(ACTION_SLOT, self).__init__()
@@ -159,7 +225,7 @@ class ACTION_SLOT(nn.Module):
         #     self.num_slots = 93
         self.resnet = i3d_r50(True)
         self.args = args
-
+        self.temporal_attn = TemporalSelfAttention(self.slot_dim)
 
         if args.backbone == 'r50':
             self.resnet = r50.R50()
@@ -315,6 +381,8 @@ class ACTION_SLOT(nn.Module):
         x = x.permute((0, 2, 3, 4, 1))
         # [bs, n, w, h, c]
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1))
+
+        x = self.temporal_attn(x)
         
         x, attn_masks = self.slot_attention(x)
 

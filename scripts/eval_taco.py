@@ -7,6 +7,8 @@ from tqdm import tqdm
 import torch.nn as nn
 import numpy as np
 import torch
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 import cv2
@@ -21,7 +23,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import average_precision_score, precision_score, recall_score, accuracy_score, hamming_loss
 from PIL import Image, ImageDraw
-
+from visualize import visualize_dataset_loss
 sys.path.append('../datasets')
 sys.path.append('../configs')
 sys.path.append('../models')
@@ -95,7 +97,6 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
     actor_str = ''
     actor = actor[0]
     pred_actor = pred_actor[0]
-
     pred_actor = torch.sigmoid(pred_actor)
     pred_actor = pred_actor > 0.5
     if args.allocated_slot:
@@ -222,26 +223,55 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
             plt.close()
 
         elif mode == 'occlusion':
+            
+            color_car = np.array([1.0, 0.0, 0.0])    # Red
+            color_bike = np.array([0.0, 0.5, 1.0])   # Blue
+            color_pedestrian= np.array([0.0, 1.0, 0.0]) # Green
+            alpha = 0.4 
 
-            alpha_1 = 0.2
-            alpha_2 = 0.2
-            alpha_3 = 0.2
-
-            color_1 = np.array([1.0, 0.0, 0.0])    # Red
-            color_2 = np.array([0.0, 1.0, 0.0])    # Green
-
-
-            colors = [color_1, color_2]
-            # Overlay the masks on raw_j with opacity
             bool_mask_list = []
             attn_mask_list = []
-            bool_mask_list.append(masks_j[48] > threshold)
-            bool_mask_list.append(masks_j[50] > threshold)
-            attn_mask_list.append((masks_j[48] > threshold).astype('uint8').reshape((128,384)))
-            attn_mask_list.append((masks_j[50] > threshold).astype('uint8').reshape((128,384)))
+            color_list = []
 
-            raw_j[bool_mask_list[0], :3] = attn_mask_list[0][bool_mask_list[0]][:, np.newaxis] * colors[0] * alpha_1 + raw_j[bool_mask_list[0], :3] * (1 - alpha_1) 
-            raw_j[bool_mask_list[1], :3] = attn_mask_list[1][bool_mask_list[1]][:, np.newaxis] * colors[1] * alpha_1 + raw_j[bool_mask_list[1], :3] * (1 - alpha_1) 
+
+            for i, a in enumerate(actor):
+                if a.data == 1.0: 
+                    
+
+                    mask_i = masks_j[i]
+                    m_min = mask_i.min()
+                    m_max = mask_i.max()
+                    norm_mask = (mask_i - m_min) / (m_max - m_min + 1e-8) 
+                    binary_mask = norm_mask > threshold
+                    # -----------------------------------------------------
+
+                    if not binary_mask.any():
+                        continue
+
+
+                    # Car (c) and Group of Car (c+): index 0 - 23
+                    if 0 <= i <= 23:
+                        bool_mask_list.append(binary_mask)
+                        attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
+                        color_list.append(color_car)
+                    
+                    # Bike (b) and Group of Bike (b+): index 24 - 47
+                    elif 24 <= i <= 47:
+                        bool_mask_list.append(binary_mask)
+                        attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
+                        color_list.append(color_bike)
+                    
+                    # Pedestrian and Group of pedestrian
+                    else:
+                        bool_mask_list.append(binary_mask)
+                        attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
+                        color_list.append(color_pedestrian)
+
+            # 4. Alpha Blending
+            for num_gt in range(len(bool_mask_list)):
+                raw_j[bool_mask_list[num_gt], :3] = attn_mask_list[num_gt][bool_mask_list[num_gt]][:, np.newaxis] * color_list[num_gt] * alpha + raw_j[bool_mask_list[num_gt], :3] * (1 - alpha)
+
+            # Kết xuất và lưu 
             plt.imshow(raw_j, cmap='gist_rainbow')
             plt.axis('off')
 
@@ -251,7 +281,7 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
 
         else:
 
-            alpha_1 = 0.2
+            alpha_1 = 0.4
             alpha_2 = 0.2
             alpha_3 = 0.2
 
@@ -273,8 +303,23 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
             attn_mask_list = []
             for i, a in enumerate(actor):
                 if a.data == 1.0:
-                    bool_mask_list.append(masks_j[i] > threshold)
-                    attn_mask_list.append((masks_j[i] > threshold).astype('uint8').reshape((128,384)))
+
+                    mask_i = masks_j[i]
+                    m_min = mask_i.min()
+                    m_max = mask_i.max()
+                    norm_mask = (mask_i - m_min) / (m_max - m_min + 1e-8) 
+                    binary_mask = norm_mask > threshold
+                    # -----------------------------------------------------
+
+                    if not binary_mask.any():
+                        continue
+
+                    bool_mask_list.append(binary_mask)
+                    attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
+                    # color_list.append(color_bike)
+
+                    # bool_mask_list.append(masks_j[i] > threshold)
+                    # attn_mask_list.append((masks_j[i] > threshold).astype('uint8').reshape((128,384)))
 
             for num_gt in range(len(bool_mask_list)):
                 raw_j[bool_mask_list[num_gt], :3] = attn_mask_list[num_gt][bool_mask_list[num_gt]][:, np.newaxis] * colors[num_gt] * alpha_1 + raw_j[bool_mask_list[num_gt], :3] * (1 - alpha_1) 
@@ -511,6 +556,9 @@ class Engine(object):
             label_actor_list = []
             map_pred_actor_list = []
             # num_selected_sample = 0
+
+            scenario_list = []
+
             for batch_num, data in enumerate(tqdm(dataloader)):
                 # if args.plot_mode == '':
                 #     max_num_obj = data['max_num_obj']
@@ -536,6 +584,9 @@ class Engine(object):
                 if args.val_confusion:
                     confusion_label = data['confusion_label']
                 scenario = map + '_'+id + '_' + v
+
+                for m, i, var in zip(data['map'], data['id'], data['variants']):
+                    scenario_list.append(f"{m}_{i}_{var}")
 
                 if args.box:
                     box_in = data['box']
@@ -696,10 +747,13 @@ class Engine(object):
                 print(f'(val) mAP of the p+: {group_p_mAP}')
 
             else:
-                mAP = average_precision_score(
+                mAP_per_class = average_precision_score(
                         label_actor_list,
-                        map_pred_actor_list.astype(np.float32),
-                        )
+                        map_pred_actor_list.astype(np.float32),	
+                        average=None)
+                
+                mAP= np.nanmean(mAP_per_class)
+
                 c_mAP = average_precision_score(
                         label_actor_list[:, :12],
                         map_pred_actor_list[:, :12].astype(np.float32)
@@ -724,10 +778,7 @@ class Engine(object):
                         label_actor_list[:, 56:64],
                         map_pred_actor_list[:, 56:64].astype(np.float32),
                         )
-                mAP_per_class = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),	
-                        average=None)
+
 
                 print(f'(val) mAP: {mAP}')
                 print(f'(val) mAP of the c: {c_mAP}')
