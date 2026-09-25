@@ -31,6 +31,7 @@ from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
 from accelerate import Accelerator
+from accelerate import DistributedDataParallelKwargs
 def plot_result(result,args):
     """
         result : mAP, loss,
@@ -596,7 +597,10 @@ if __name__ == '__main__':
         num_actor_class = 20
     elif args.taco_class == 'Object':
         num_actor_class = 6
-    accelerator = Accelerator()
+    
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+
     print('initialize train set')
     train_set = TACO(args=args, split='train')
     print('initialize val set')
