@@ -32,6 +32,10 @@ from loss import ActionSlotLoss
 from utils import AverageMeter
 from accelerate import Accelerator
 from accelerate import DistributedDataParallelKwargs
+import warnings
+
+warnings.filterwarnings("ignore")
+
 def plot_result(result,args):
     """
         result : mAP, loss,
