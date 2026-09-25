@@ -512,18 +512,19 @@ class Engine(object):
 
                 print(f'acc of the ego: {self.correct_ego/self.total_ego}')
                 writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
-                self.best_mAP = mAP
-                self.best_log = [
-                    f'(val) mAP: {mAP}',
-                    f'(val) mAP of the c: {c_mAP}',
-                    f'(val) mAP of the b: {b_mAP}',
-                    f'(val) mAP of the p: {p_mAP}',
-                    f'(val) mAP of the c+: {group_c_mAP}',
-                    f'(val) mAP of the b+: {group_b_mAP}',
-                    f'(val) mAP of the p+: {group_p_mAP}'
-                ]
-                save_cp = True
-                print(f'best mAP : {self.best_mAP}')
+                if mAP > self.best_mAP:
+                    self.best_mAP = mAP
+                    self.best_log = [
+                        f'(val) mAP: {mAP}',
+                        f'(val) mAP of the c: {c_mAP}',
+                        f'(val) mAP of the b: {b_mAP}',
+                        f'(val) mAP of the p: {p_mAP}',
+                        f'(val) mAP of the c+: {group_c_mAP}',
+                        f'(val) mAP of the b+: {group_b_mAP}',
+                        f'(val) mAP of the p+: {group_p_mAP}'
+                    ]
+                    save_cp = True
+                    print(f'best mAP : {self.best_mAP}')
 
                 with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
                     f.write('epoch: ' + str(self.cur_epoch))
