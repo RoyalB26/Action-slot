@@ -77,11 +77,17 @@ class Engine(object):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.accelerator = accelerator
-        self.num_actor_class = num_actor_class
-        if hasattr(self.model, 'resolution'):
-            attention_res = (self.model.resolution[0]*args.bg_upsample, self.model.resolution[1]*args.bg_upsample)
+        raw_model = self.accelerator.unwrap_model(self.model) if hasattr(self, 'accelerator') and self.accelerator is not None else self.model
+
+        if hasattr(raw_model, 'resolution'):
+            attention_res = (raw_model.resolution[0] * args.bg_upsample, raw_model.resolution[1] * args.bg_upsample)
+        elif hasattr(self.model, 'module') and hasattr(self.model.module, 'resolution'):
+            attention_res = (self.model.module.resolution[0] * args.bg_upsample, self.model.module.resolution[1] * args.bg_upsample)
+        elif hasattr(self.model, 'resolution'):
+            attention_res = (self.model.resolution[0] * args.bg_upsample, self.model.resolution[1] * args.bg_upsample)
         else:
-            attention_res = None
+            attention_res = (16 * args.bg_upsample, 16 * args.bg_upsample)
+
         self.criterion = ActionSlotLoss(args, num_actor_class, attention_res).to(self.args.device)
 
         self.cur_epoch = 0
