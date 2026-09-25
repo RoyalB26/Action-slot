@@ -89,7 +89,7 @@ class TACO(Dataset):
         mapping = {item: part for part, items in group_rules.items() for item in items}
         mapping2 = {item: part for part, items in group_rules2.items() for item in items}
 
-        for scenario in tqdm(scenario_list):
+        for scenario in scenario_list:
             if not scenario in label_list:
                 continue
             gt = label_list[scenario]
@@ -124,7 +124,7 @@ class TACO(Dataset):
             if folder_part == '2part':
                 root= "/kaggle/input/datasets/royalb26/taco-dataset-" + mapping[basic]
 
-            print(root)
+            
             scenario_path = os.path.join(root,parent_folder,basic,'variant_scenario',variant)
             video_folder_path = os.path.join(scenario_path,'rgb',video_folder)
             if os.path.isdir(video_folder_path):
@@ -225,7 +225,7 @@ class TACO(Dataset):
                         
             
         # for each data
-        for data in tqdm(self.videos_list):
+        for data in self.videos_list:
             root = data[0][0].split('/')
             root = root[:-3]
             root = '/'+os.path.join(*root)
@@ -275,7 +275,7 @@ class TACO(Dataset):
             return out
             
         
-        for data,idx in tqdm(zip(self.videos_list,self.idx)):
+        for data,idx in zip(self.videos_list,self.idx):
             root = data[0][0].split('/')
             root = root[:-3]
             root = '/'+os.path.join(*root)

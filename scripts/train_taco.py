@@ -234,7 +234,7 @@ class Engine(object):
         self.model = self.model.train()
         # Train loop
         self.num_batches = len(dataloader_train)
-        for data in tqdm(dataloader_train):
+        for data in dataloader_train:
             self.step(data,'train')
         if scheduler is not None:
             scheduler.step()
@@ -286,7 +286,7 @@ class Engine(object):
         save_cp = False
         self.reset_log()
         with torch.no_grad():	
-            for data in tqdm(dataloader):
+            for data in dataloader:
                 self.step(data,'val')
             
             if args.action_attn_weight>0. or args.bg_attn_weight>0.:
