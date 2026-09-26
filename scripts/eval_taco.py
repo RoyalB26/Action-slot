@@ -811,12 +811,27 @@ if __name__ == "__main__":
 
     # Data
     val_set = taco.TACO(args=args, split='val')
+    print(len(val_set))
     dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=4, pin_memory=True, drop_last=True)
 
     model = generate_model(args, num_ego_class, num_actor_class).cuda()
     trainer = Engine(args)
 
     model_path = os.path.join(args.cp)
-    model.load_state_dict(torch.load(model_path))
+    print(f"===> Đang nạp weights từ: {model_path}")
+    checkpoint = torch.load(model_path, map_location='cpu')
+
+    # 1. Bóc tách dictionary nếu bị lồng key
+    if isinstance(checkpoint, dict):
+        if 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        elif 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
+    else:
+        state_dict = checkpoint
 
     trainer.validate(model, dataloader_val, None)

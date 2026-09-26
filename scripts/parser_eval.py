@@ -35,7 +35,7 @@ def get_eval_parser():
     parser.add_argument('--model_index', type=int, default=-1)
     parser.add_argument('--cp', type=str, default='best_model.pth')
     parser.add_argument('--plot', help="", action="store_true")
-    parser.add_argument('--plot_threshold', type=float, default=0, help='')
+    parser.add_argument('--plot_threshold', type=float, default=0.5, help='')
     parser.add_argument('--plot_mode', type=str, default='')
     parser.add_argument('--val_confusion', help="", action="store_true")
     parser.add_argument('--scale', type=float, default=-1.0)

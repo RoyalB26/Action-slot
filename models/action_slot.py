@@ -315,6 +315,14 @@ class ACTION_SLOT(nn.Module):
                 resolution=self.resolution3d,
                 num_actor_class = num_actor_class
                 ) 
+            self.object_attention= SlotAttention(
+                    num_slots=num_actor_class + 1,
+                    dim=self.slot_dim,
+                    eps = 1e-8,
+                    input_dim= self.hidden_dim2,
+                    resolution=self.resolution3d,
+                    num_actor_class = num_actor_class
+            )
         else:
             self.slot_attention = SlotAttention(
                 num_slots=self.num_slots,
@@ -324,7 +332,23 @@ class ACTION_SLOT(nn.Module):
                 resolution=self.resolution3d,
                 num_actor_class = num_actor_class
                 ) 
+            self.object_attention= SlotAttention(
+                    num_slots=num_actor_class,
+                    dim=self.slot_dim,
+                    eps = 1e-8,
+                    input_dim= self.hidden_dim2,
+                    resolution=self.resolution3d,
+                    num_actor_class = num_actor_class
+            )
 
+
+
+        self.feedback_proj = nn.Sequential(
+            nn.Linear(self.slot_dim, self.hidden_dim2),
+            nn.LayerNorm(self.hidden_dim2)
+        )
+
+        self.gamma = nn.Parameter(torch.zeros(1))
         self.drop = nn.Dropout(p=0.5)         
         self.pool = nn.AdaptiveAvgPool3d(output_size=1)
 
@@ -385,6 +409,15 @@ class ACTION_SLOT(nn.Module):
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1))
 
         x = self.temporal_attn(x)
+
+        object_slots, attn_masks = self.object_attention(x)
+        # object_slots: (B, num_object, c)
+        # attn_masks:   (B, num_object, thw)
+        slot_per_patch = torch.bmm(attn_masks.transpose(1, 2), object_slots)
+        # slot_per_patch: (B, thw, c)
+        c = x.shape[-1]
+        slot_per_patch_5d = slot_per_patch.reshape(batch_size, new_seq_len, new_h, new_w, c)
+        x = x + self.gamma * self.feedback_proj(slot_per_patch_5d)
         
         x, attn_masks = self.slot_attention(x)
 

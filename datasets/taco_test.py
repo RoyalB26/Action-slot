@@ -130,11 +130,11 @@ class TACO_TEST(Dataset):
             self.obj_seg_list.append(obj_f)
             
 
-        if args.box:
-            if args.gt:
-                self.parse_tracklets() 
-            else:
-                self.parse_tracklets_detection()
+        # if args.box:
+        #     if args.gt:
+        #         self.parse_tracklets() 
+        #     else:
+        #         self.parse_tracklets_detection()
 
         print('num_videos: ' + str(len(self.variants)))
 
@@ -160,14 +160,28 @@ class TACO_TEST(Dataset):
             
         
         for data,idx in tqdm(zip(self.videos_list,self.idx)):
-            root = data[0][0].split('/')
-            root = root[:-3]
-            root = '/'+os.path.join(*root)
-            f = open(os.path.join(root,'tracks','pred','downsampled.txt'))
-            tracklet = f.readlines()
-            # parse_tracklet
-            tracklet = parse_tracklet()
-            f.close()
+            norm_path = data[0][0].replace('\\', '/')
+            parts = norm_path.split('/')
+            
+            # Cắt bỏ 3 phần tử cuối: ['rgb', 'downsampled', '00000376.jpg']
+            # root sẽ dừng lại ở folder kịch bản (ví dụ: .../variant_scenario/102)
+            root_parts = parts[:-3]
+            
+            # Ghép lại đường dẫn phù hợp với hệ điều hành hiện tại
+            root = os.path.sep.join(root_parts)
+            
+            # Nếu trên Windows mà bị mất dấu sau ổ đĩa (ví dụ 'D:' thành 'D:\'), đảm bảo định dạng đúng
+            if ':' in root_parts[0] and not root.startswith(root_parts[0] + os.path.sep):
+                root = root_parts[0] + os.path.sep + os.path.sep.join(root_parts[1:])
+
+            track_path = os.path.join(root, 'tracks', 'pred', 'downsampled.txt')
+            print(f"\n\nROOT IS: {root}")
+            print(f"TRACK PATH: {track_path}\n\n")
+            
+            with open(track_path, 'r') as f:
+                tracklet = f.readlines()
+            
+            tracklet = parse_tracklet(tracklet)
             # for every sample]
             assert len(data) == len(idx)
             for i,idx_list in enumerate(idx):
@@ -259,7 +273,7 @@ class TACO_TEST(Dataset):
         data['videos'] = []
         data['id'] = self.id[index]
         data['variants'] = self.variants[index]
-
+        data['raw'] = []
         data['map'] = self.maps[index]
 
         sample_idx = len(self.videos_list[index])//2
@@ -267,16 +281,20 @@ class TACO_TEST(Dataset):
         seq_videos = self.videos_list[index][sample_idx]
 
         # add tracklets
-        if self.args.box:
-            track_path = seq_videos[0].split('/')
-            track_path = track_path[:-3]
-            track_path = '/' + os.path.join(*track_path,'tracks','pred',str(sample_idx)) + '.npy'
-            tracklets = np.load(track_path)
-            data['box'] = tracklets
+        # if self.args.box:
+        #     track_path = seq_videos[0].split('/')
+        #     track_path = track_path[:-3]
+        #     track_path = '/' + os.path.join(*track_path,'tracks','pred',str(sample_idx)) + '.npy'
+        #     tracklets = np.load(track_path)
+        #     data['box'] = tracklets
 
         for i in range(self.seq_len):
             x = Image.open(seq_videos[i]).convert('RGB')
             data['videos'].append(x)
+            if self.args.plot:
+                data['raw'].append(x)
+        if self.args.plot:
+            data['raw'] = to_np_no_norm(data['raw'])
         data['videos'] = to_np(data['videos'], self.args.model_name, self.args.backbone)
         return data
 
