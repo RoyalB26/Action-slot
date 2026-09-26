@@ -6,7 +6,7 @@ import torch
 torch.backends.cudnn.benchmark = True
 torch.cuda.empty_cache()
 import warnings
-
+from torchsummary import summary
 warnings.filterwarnings("ignore")
 
 if __name__ == '__main__':
@@ -23,4 +23,4 @@ if __name__ == '__main__':
         num_actor_class = 6
 
     model= generate_model(args, num_ego_class, num_actor_class)
-    
+    print(model)
