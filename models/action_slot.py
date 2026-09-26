@@ -228,7 +228,7 @@ class ACTION_SLOT(nn.Module):
         self.resnet = i3d_r50(True)
         self.args = args
         self.temporal_attn = SpatioTemporalDeformableAttention(self.slot_dim)
-
+        self.num_obj_slot = 6
         if args.backbone == 'r50':
             self.resnet = r50.R50()
             self.in_c = 2048
@@ -316,12 +316,12 @@ class ACTION_SLOT(nn.Module):
                 num_actor_class = num_actor_class
                 ) 
             self.object_attention= SlotAttention(
-                    num_slots=num_actor_class + 1,
+                    num_slots= self.num_obj_slot + 1,
                     dim=self.slot_dim,
                     eps = 1e-8,
                     input_dim= self.hidden_dim2,
                     resolution=self.resolution3d,
-                    num_actor_class = num_actor_class
+                    num_actor_class = self.num_obj_slot
             )
         else:
             self.slot_attention = SlotAttention(
@@ -333,12 +333,12 @@ class ACTION_SLOT(nn.Module):
                 num_actor_class = num_actor_class
                 ) 
             self.object_attention= SlotAttention(
-                    num_slots=num_actor_class,
+                    num_slots=self.num_obj_slot,
                     dim=self.slot_dim,
                     eps = 1e-8,
                     input_dim= self.hidden_dim2,
                     resolution=self.resolution3d,
-                    num_actor_class = num_actor_class
+                    num_actor_class = self.num_obj_slot
             )
 
 
@@ -346,6 +346,18 @@ class ACTION_SLOT(nn.Module):
         self.feedback_proj = nn.Sequential(
             nn.Linear(self.slot_dim, self.hidden_dim2),
             nn.LayerNorm(self.hidden_dim2)
+        )
+
+        self.temporal_pool_conv = nn.Sequential(
+            nn.Conv3d(
+                in_channels=self.slot_dim,      # 256
+                out_channels=self.hidden_dim2,  # 256
+                kernel_size=(16, 1, 1),         # Quét hết 16 frames theo trục thời gian
+                stride=(1, 1, 1),
+                padding=0
+            ),
+            nn.BatchNorm3d(self.hidden_dim2),   # hoặc GroupNorm/LayerNorm
+            nn.ReLU(inplace=True)
         )
 
         self.gamma = nn.Parameter(torch.zeros(1))
@@ -411,16 +423,33 @@ class ACTION_SLOT(nn.Module):
         x = self.temporal_attn(x)
 
         object_slots, attn_masks = self.object_attention(x)
-        # object_slots: (B, num_object, c)
-        # attn_masks:   (B, num_object, thw)
-        slot_per_patch = torch.bmm(attn_masks.transpose(1, 2), object_slots)
-        # slot_per_patch: (B, thw, c)
-        c = x.shape[-1]
-        slot_per_patch_5d = slot_per_patch.reshape(batch_size, new_seq_len, new_h, new_w, c)
-        x = x + self.gamma * self.feedback_proj(slot_per_patch_5d)
+        if attn_masks.shape[1] == object_slots.shape[1] + 1:
+            attn_masks_obj = attn_masks[:, 1:, :]  # [B, obj_slot, thw]
+        else:
+            attn_masks_obj = attn_masks
+
+        # 2. Chiếu ngược về từng patch: [B, thw, obj_slot] x [B, obj_slot, C] -> [B, thw, C]
+        slot_per_patch = torch.bmm(attn_masks_obj.transpose(1, 2), object_slots)
+
+        B = x.shape[0]
+        C = slot_per_patch.shape[-1]
+        H, W = self.resolution[0], self.resolution[1]  # 8, 24
+        T_orig = slot_per_patch.shape[1] // (H * W)    # 16
+
+        # 1. Reshape về 5D: [B, T, H, W, C]
+        slot_per_patch_5d = slot_per_patch.view(B, T_orig, H, W, C)
+
+        # 2. Đưa về chuẩn Conv3D: [B, C, T, H, W]
+        slot_per_patch_5d = slot_per_patch_5d.permute(0, 4, 1, 2, 3)
+
+        # 3. Đi qua Temporal Conv3D: [B, C, 16, 8, 24] -> [B, C, 1, 8, 24]
+        slot_per_patch_1frame = self.temporal_pool_conv(slot_per_patch_5d)
+
+        # 4. Trả lại dạng [B, 1, 8, 24, C] để khớp với x
+        slot_per_patch_1frame = slot_per_patch_1frame.permute(0, 2, 3, 4, 1)
+        x = x + self.gamma * self.feedback_proj(slot_per_patch_1frame)
         
         x, attn_masks = self.slot_attention(x)
-
         # no pool, 3d slot
         b, n, thw = attn_masks.shape
         attn_masks = attn_masks.reshape(b, n, -1)
