@@ -30,6 +30,11 @@ from datasets.taco import TACO
 from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
+from accelerate import Accelerator
+from accelerate import DistributedDataParallelKwargs
+import warnings
+
+warnings.filterwarnings("ignore")
 
 def plot_result(result,args):
     """
@@ -70,20 +75,27 @@ class Engine(object):
         
     """
 
-    def __init__(self, args, model, optimizer, num_actor_class, scheduler=None):
+    def __init__(self, args, model, optimizer, num_actor_class, accelerator, scheduler=None):
         self.args = args
   
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.num_actor_class = num_actor_class
-        if hasattr(self.model, 'resolution'):
-            attention_res = (self.model.resolution[0]*args.bg_upsample, self.model.resolution[1]*args.bg_upsample)
+        self.accelerator = accelerator
+        raw_model = self.accelerator.unwrap_model(self.model) if hasattr(self, 'accelerator') and self.accelerator is not None else self.model
+
+        if hasattr(raw_model, 'resolution'):
+            attention_res = (raw_model.resolution[0] * args.bg_upsample, raw_model.resolution[1] * args.bg_upsample)
+        elif hasattr(self.model, 'module') and hasattr(self.model.module, 'resolution'):
+            attention_res = (self.model.module.resolution[0] * args.bg_upsample, self.model.module.resolution[1] * args.bg_upsample)
+        elif hasattr(self.model, 'resolution'):
+            attention_res = (self.model.resolution[0] * args.bg_upsample, self.model.resolution[1] * args.bg_upsample)
         else:
-            attention_res = None
+            attention_res = (16 * args.bg_upsample, 16 * args.bg_upsample)
+
         self.criterion = ActionSlotLoss(args, num_actor_class, attention_res).to(self.args.device)
 
-        self.cur_epoch = 0
+        self.cur_epoch = args.start_epoch
         self.train_loss = []
         self.val_loss = []
         self.bestval = 1e10
@@ -206,7 +218,7 @@ class Engine(object):
         
         if mode == 'train':
             self.optimizer.zero_grad()
-            loss.backward()
+            self.accelerator.backward(loss)
             self.optimizer.step()
             if self.scheduler is not None:
                 self.scheduler.step()
@@ -233,7 +245,7 @@ class Engine(object):
         self.model = self.model.train()
         # Train loop
         self.num_batches = len(dataloader_train)
-        for data in tqdm(dataloader_train):
+        for data in dataloader_train:
             self.step(data,'train')
         if scheduler is not None:
             scheduler.step()
@@ -285,7 +297,7 @@ class Engine(object):
         save_cp = False
         self.reset_log()
         with torch.no_grad():	
-            for data in tqdm(dataloader):
+            for data in dataloader:
                 self.step(data,'val')
             
             if args.action_attn_weight>0. or args.bg_attn_weight>0.:
@@ -512,7 +524,7 @@ class Engine(object):
                         f'(val) mAP of the p+: {group_p_mAP}'
                     ]
                     save_cp = True
-                print(f'best mAP : {self.best_mAP}')
+                    print(f'best mAP : {self.best_mAP}')
 
                 with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
                     f.write('epoch: ' + str(self.cur_epoch))
@@ -581,7 +593,18 @@ if __name__ == '__main__':
     args, logdir = get_parser()
     print(args)
     logdir = logdir.replace(':', '_').replace('\n', '_')
-    writer = SummaryWriter(log_dir=logdir)
+    logdir = logdir.replace(" ", "")
+    print(logdir)
+    # 2. Lấy đường dẫn tuyệt đối
+    abs_logdir = os.path.abspath(logdir)
+
+    # Nếu đang chạy trên Windows và chưa có prefix \\?\
+    if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
+        abs_logdir = f'\\\\?\\{abs_logdir}'
+
+    # Tạo thư mục và writer
+    os.makedirs(abs_logdir, exist_ok=True)
+    writer = SummaryWriter(log_dir=abs_logdir)
     seq_len = args.seq_len
 
     num_ego_class = 4
@@ -590,16 +613,19 @@ if __name__ == '__main__':
         num_actor_class = 20
     elif args.taco_class == 'Object':
         num_actor_class = 6
+    
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
 
     print('initialize train set')
     train_set = TACO(args=args, split='train')
     print('initialize val set')
     val_set = TACO(args=args, split='val')
-    
+    model = generate_model(args, num_ego_class, num_actor_class).cuda()
     dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True, drop_last=True)    
     dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True, drop_last=True)
     # Model
-    model = generate_model(args, num_ego_class, num_actor_class).cuda()
+    
 
     if 'mvit' == args.model_name:
         params = set_lr(model)#
@@ -612,9 +638,52 @@ if __name__ == '__main__':
     else:
         scheduler = None
 
-    # -----------	
-    trainer = Engine(args,model,optimizer,num_actor_class,scheduler)
+    if args.resume_from_checkpoint:
+        model_path = os.path.join(args.cp)
+        print(f"===> Đang nạp weights từ: {model_path}")
+        checkpoint = torch.load(model_path, map_location='cpu')
 
+        # 1. Bóc tách dictionary nếu bị lồng key
+        if isinstance(checkpoint, dict):
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            elif 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            else:
+                state_dict = checkpoint
+        else:
+            state_dict = checkpoint
+
+        # 2. Xóa các prefix ngoài ý muốn ('module.', '_orig_mod.')
+        clean_state_dict = {}
+        for k, v in state_dict.items():
+            new_k = k
+            if new_k.startswith("module."):
+                new_k = new_k[len("module."):]
+            if new_k.startswith("_orig_mod."):
+                new_k = new_k[len("_orig_mod."):]
+            clean_state_dict[new_k] = v
+
+        # 3. Lọc bỏ các layer bị lệch shape (nếu có chỉnh sửa channel/dim trước đó)
+        model_dict = model.state_dict()
+        matched_state_dict = {}
+        mismatched_keys = []
+
+        for k, v in clean_state_dict.items():
+            if k in model_dict:
+                if v.shape == model_dict[k].shape:
+                    matched_state_dict[k] = v
+                else:
+                    mismatched_keys.append((k, v.shape, model_dict[k].shape))
+
+        # 4. Nạp weights vào model
+        model.load_state_dict(matched_state_dict, strict=False)
+
+    # -----------	
+    model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)
+    trainer = Engine(args,model,optimizer,num_actor_class,accelerator, scheduler)
     # Create logdir
     print(f'Checkpoint path: {logdir}')
 
