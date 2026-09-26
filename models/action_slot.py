@@ -365,6 +365,7 @@ class ACTION_SLOT(nn.Module):
         self.pool = nn.AdaptiveAvgPool3d(output_size=1)
 
     def forward(self, x, box=False):
+        
         seq_len = len(x)
         batch_size = x[0].shape[0]
         height, width = x[0].shape[2], x[0].shape[3]
