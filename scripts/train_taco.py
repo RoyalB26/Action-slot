@@ -95,7 +95,7 @@ class Engine(object):
 
         self.criterion = ActionSlotLoss(args, num_actor_class, attention_res).to(self.args.device)
 
-        self.cur_epoch = 0
+        self.cur_epoch = args.start_epoch
         self.train_loss = []
         self.val_loss = []
         self.bestval = 1e10
@@ -626,6 +626,10 @@ if __name__ == '__main__':
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_lr)
     else:
         scheduler = None
+
+    if args.resume_from_checkpoint:
+        model_path = os.path.join(args.cp)
+        model.load_state_dict(torch.load(model_path))
 
     # -----------	
     model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)

@@ -50,7 +50,8 @@ def get_parser():
     parser.add_argument('--num_workers', type=int, default=8, help='Number of train epochs.')
     parser.add_argument('--parallel', help="", action="store_true")
     parser.add_argument('--tune_block_idx', type=int, default=[0,1,2,-3,-2,-1],nargs='+')
-    
+    parser.add_argument('--resume_from_checkpoint', help="", action="store_true")
+    parser.add_argument('--start_epoch', type=int, default= 0)
 
     # eval
     parser.add_argument('--model_index', type=int, default=-1)
