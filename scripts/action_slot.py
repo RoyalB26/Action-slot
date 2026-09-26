@@ -10,6 +10,8 @@ import r50
 import numpy as np
 from math import ceil 
 from ptflops import get_model_complexity_info
+from deformable_DETR import SpatioTemporalDeformableAttention
+
 
 class SlotAttention(nn.Module):
     def __init__(self, num_slots, dim, num_actor_class=64, eps=1e-8, input_dim=64, resolution=[16, 8, 24], allocated_slot=True):
@@ -140,6 +142,72 @@ class SoftPositionEmbed3D(nn.Module):
         grid = self.embedding(self.grid)
         return inputs + grid
 
+class TemporalSelfAttention(nn.Module):
+    def __init__(self, dim, num_heads=4, qkv_bias=False, drop=0.0):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        assert dim % num_heads == 0, "num_heads has to devides dim"
+
+        self.norm = nn.LayerNorm(dim)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(drop)
+
+        # Feed-Forward Network (FFN)
+        self.norm_ffn = nn.LayerNorm(dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * 2),
+            nn.GELU(),
+            nn.Dropout(drop),
+            nn.Linear(dim * 2, dim),
+            nn.Dropout(drop)
+        )
+
+    def forward(self, x):
+        """
+        Args:
+            x: tensor[B, T, H, W, D] 
+        Returns:
+            tensor[B, T, H, W, D]
+        """
+        B, T, H, W, D = x.shape
+        residual = x
+
+
+        x_norm = self.norm(x)
+
+
+        # [B, T, H, W, D] -> [B, H, W, T, D] -> [B * H * W, T, D]
+        x_temp = x_norm.permute(0, 2, 3, 1, 4).reshape(B * H * W, T, D)
+
+
+        # [B * H * W, T, 3 * D] -> [B * H * W, T, 3, num_heads, head_dim]
+        qkv = self.qkv(x_temp).reshape(B * H * W, T, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4) # [3, B * H * W, num_heads, T, head_dim]
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # dots: [B * H * W, num_heads, T, T]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+
+        # out: [B * H * W, num_heads, T, head_dim] -> [B * H * W, T, D]
+        out = (attn @ v).transpose(1, 2).reshape(B * H * W, T, D)
+        out = self.proj_drop(self.proj(out))
+
+        out = out.view(B, H, W, T, D).permute(0, 3, 1, 2, 4)
+
+        # Residual connection 1
+        x = residual + out
+
+        # Residual connection 2 (FFN)
+        x = x + self.ffn(self.norm_ffn(x))
+
+        return x
+
 class ACTION_SLOT(nn.Module):
     def __init__(self, args, num_ego_class, num_actor_class, num_slots=21, box=False, videomae=None):
         super(ACTION_SLOT, self).__init__()
@@ -159,8 +227,8 @@ class ACTION_SLOT(nn.Module):
         #     self.num_slots = 93
         self.resnet = i3d_r50(True)
         self.args = args
-
-
+        self.temporal_attn = SpatioTemporalDeformableAttention(self.slot_dim)
+        self.num_obj_slot = 6
         if args.backbone == 'r50':
             self.resnet = r50.R50()
             self.in_c = 2048
@@ -247,6 +315,14 @@ class ACTION_SLOT(nn.Module):
                 resolution=self.resolution3d,
                 num_actor_class = num_actor_class
                 ) 
+            self.object_attention= SlotAttention(
+                    num_slots= self.num_obj_slot + 1,
+                    dim=self.slot_dim,
+                    eps = 1e-8,
+                    input_dim= self.hidden_dim2,
+                    resolution=self.resolution3d,
+                    num_actor_class = self.num_obj_slot
+            )
         else:
             self.slot_attention = SlotAttention(
                 num_slots=self.num_slots,
@@ -256,11 +332,40 @@ class ACTION_SLOT(nn.Module):
                 resolution=self.resolution3d,
                 num_actor_class = num_actor_class
                 ) 
+            self.object_attention= SlotAttention(
+                    num_slots=self.num_obj_slot,
+                    dim=self.slot_dim,
+                    eps = 1e-8,
+                    input_dim= self.hidden_dim2,
+                    resolution=self.resolution3d,
+                    num_actor_class = self.num_obj_slot
+            )
 
+
+
+        self.feedback_proj = nn.Sequential(
+            nn.Linear(self.slot_dim, self.hidden_dim2),
+            nn.LayerNorm(self.hidden_dim2)
+        )
+
+        self.temporal_pool_conv = nn.Sequential(
+            nn.Conv3d(
+                in_channels=self.slot_dim,      # 256
+                out_channels=self.hidden_dim2,  # 256
+                kernel_size=(16, 1, 1),         # Quét hết 16 frames theo trục thời gian
+                stride=(1, 1, 1),
+                padding=0
+            ),
+            nn.BatchNorm3d(self.hidden_dim2),   # hoặc GroupNorm/LayerNorm
+            nn.ReLU(inplace=True)
+        )
+
+        self.gamma = nn.Parameter(torch.zeros(1))
         self.drop = nn.Dropout(p=0.5)         
         self.pool = nn.AdaptiveAvgPool3d(output_size=1)
 
     def forward(self, x, box=False):
+        
         seq_len = len(x)
         batch_size = x[0].shape[0]
         height, width = x[0].shape[2], x[0].shape[3]
@@ -315,9 +420,37 @@ class ACTION_SLOT(nn.Module):
         x = x.permute((0, 2, 3, 4, 1))
         # [bs, n, w, h, c]
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1))
+
+        x = self.temporal_attn(x)
+
+        object_slots, attn_masks = self.object_attention(x)
+        if attn_masks.shape[1] == object_slots.shape[1] + 1:
+            attn_masks_obj = attn_masks[:, 1:, :]  # [B, obj_slot, thw]
+        else:
+            attn_masks_obj = attn_masks
+
+        # 2. Chiếu ngược về từng patch: [B, thw, obj_slot] x [B, obj_slot, C] -> [B, thw, C]
+        slot_per_patch = torch.bmm(attn_masks_obj.transpose(1, 2), object_slots)
+
+        B = x.shape[0]
+        C = slot_per_patch.shape[-1]
+        H, W = self.resolution[0], self.resolution[1]  # 8, 24
+        T_orig = slot_per_patch.shape[1] // (H * W)    # 16
+
+        # 1. Reshape về 5D: [B, T, H, W, C]
+        slot_per_patch_5d = slot_per_patch.view(B, T_orig, H, W, C)
+
+        # 2. Đưa về chuẩn Conv3D: [B, C, T, H, W]
+        slot_per_patch_5d = slot_per_patch_5d.permute(0, 4, 1, 2, 3)
+
+        # 3. Đi qua Temporal Conv3D: [B, C, 16, 8, 24] -> [B, C, 1, 8, 24]
+        slot_per_patch_1frame = self.temporal_pool_conv(slot_per_patch_5d)
+
+        # 4. Trả lại dạng [B, 1, 8, 24, C] để khớp với x
+        slot_per_patch_1frame = slot_per_patch_1frame.permute(0, 2, 3, 4, 1)
+        x = x + self.gamma * self.feedback_proj(slot_per_patch_1frame)
         
         x, attn_masks = self.slot_attention(x)
-
         # no pool, 3d slot
         b, n, thw = attn_masks.shape
         attn_masks = attn_masks.reshape(b, n, -1)
