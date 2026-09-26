@@ -220,8 +220,8 @@ class Engine(object):
             self.optimizer.zero_grad()
             self.accelerator.backward(loss)
             self.optimizer.step()
-            if self.scheduler is not None:
-                self.scheduler.step()
+            # if self.scheduler is not None:
+            #     self.scheduler.step()
         else:
             if loss_dict['attn']['action_inter'] is not None:
                 self.action_inter.update(loss_dict['attn']['action_inter'])
