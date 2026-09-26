@@ -629,7 +629,43 @@ if __name__ == '__main__':
 
     if args.resume_from_checkpoint:
         model_path = os.path.join(args.cp)
-        model.load_state_dict(torch.load(model_path))
+        print(f"===> Đang nạp weights từ: {model_path}")
+        checkpoint = torch.load(model_path, map_location='cpu')
+
+        # 1. Bóc tách dictionary nếu bị lồng key
+        if isinstance(checkpoint, dict):
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            elif 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            else:
+                state_dict = checkpoint
+        else:
+            state_dict = checkpoint
+
+        # 2. Xử lý lệch tiền tố 'module.' do DDP/Accelerate
+        new_state_dict = {}
+        model_keys = set(model.state_dict().keys())
+        
+        # Kiểm tra xem mô hình hiện tại có tiền tố 'module.' hay không
+        model_has_module = any(k.startswith('module.') for k in model_keys)
+        checkpoint_has_module = any(k.startswith('module.') for k in state_dict.keys())
+
+        for k, v in state_dict.items():
+            name = k
+            if checkpoint_has_module and not model_has_module:
+                name = name.replace('module.', '', 1)  # Bỏ tiền tố module.
+            elif not checkpoint_has_module and model_has_module:
+                name = f'module.{name}'               # Thêm tiền tố module.
+            new_state_dict[name] = v
+
+        # 3. Nạp trọng số
+        missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
+        print(f"===> Nạp hoàn tất! Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}")
+        if len(missing) > 0:
+            print(f"     Ví dụ missing: {missing[:5]}")
 
     # -----------	
     model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)
