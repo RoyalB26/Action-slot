@@ -184,6 +184,7 @@ class Engine(object):
     def test(self, model, dataloader, epoch):
         save_results = {}
         model.eval()
+        print("Bắt đầu test")
         with torch.no_grad():   
             for batch_num, data in enumerate(tqdm(dataloader)):
 
@@ -257,22 +258,48 @@ def main():
     model = generate_model(args, num_ego_class, num_actor_class).cuda()
     trainer = Engine(args, logdir)
 
-    # model_path = os.path.join(args.cp)
-    # print(f"===> Đang nạp weights từ: {model_path}")
-    # checkpoint = torch.load(model_path, map_location='cpu')
+    model_path = os.path.join(args.cp)
+    print(f"===> Đang nạp weights từ: {model_path}")
+    checkpoint = torch.load(model_path, map_location='cpu')
 
-    # # 1. Bóc tách dictionary nếu bị lồng key
-    # if isinstance(checkpoint, dict):
-    #     if 'model_state_dict' in checkpoint:
-    #         state_dict = checkpoint['model_state_dict']
-    #     elif 'state_dict' in checkpoint:
-    #         state_dict = checkpoint['state_dict']
-    #     elif 'model' in checkpoint:
-    #         state_dict = checkpoint['model']
-    #     else:
-    #         state_dict = checkpoint
-    # else:
-    #     state_dict = checkpoint
+    # 1. Bóc tách dictionary nếu bị lồng key
+    if isinstance(checkpoint, dict):
+        if 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        elif 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
+    else:
+        state_dict = checkpoint
+
+    # 2. Xóa các prefix ngoài ý muốn ('module.', '_orig_mod.')
+    clean_state_dict = {}
+    for k, v in state_dict.items():
+        new_k = k
+        if new_k.startswith("module."):
+            new_k = new_k[len("module."):]
+        if new_k.startswith("_orig_mod."):
+            new_k = new_k[len("_orig_mod."):]
+        clean_state_dict[new_k] = v
+
+    # 3. Lọc bỏ các layer bị lệch shape (nếu có chỉnh sửa channel/dim trước đó)
+    model_dict = model.state_dict()
+    matched_state_dict = {}
+    mismatched_keys = []
+
+    for k, v in clean_state_dict.items():
+        if k in model_dict:
+            if v.shape == model_dict[k].shape:
+                matched_state_dict[k] = v
+            else:
+                mismatched_keys.append((k, v.shape, model_dict[k].shape))
+
+    # 4. Nạp weights vào model
+    model.load_state_dict(matched_state_dict, strict=False)
+
 
     trainer.test(model, dataloader_test, None)
 

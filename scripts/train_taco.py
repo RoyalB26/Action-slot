@@ -593,7 +593,18 @@ if __name__ == '__main__':
     args, logdir = get_parser()
     print(args)
     logdir = logdir.replace(':', '_').replace('\n', '_')
-    writer = SummaryWriter(log_dir=logdir)
+    logdir = logdir.replace(" ", "")
+    print(logdir)
+    # 2. Lấy đường dẫn tuyệt đối
+    abs_logdir = os.path.abspath(logdir)
+
+    # Nếu đang chạy trên Windows và chưa có prefix \\?\
+    if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
+        abs_logdir = f'\\\\?\\{abs_logdir}'
+
+    # Tạo thư mục và writer
+    os.makedirs(abs_logdir, exist_ok=True)
+    writer = SummaryWriter(log_dir=abs_logdir)
     seq_len = args.seq_len
 
     num_ego_class = 4
@@ -610,11 +621,11 @@ if __name__ == '__main__':
     train_set = TACO(args=args, split='train')
     print('initialize val set')
     val_set = TACO(args=args, split='val')
-    
+    model = generate_model(args, num_ego_class, num_actor_class).cuda()
     dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True, drop_last=True)    
     dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True, drop_last=True)
     # Model
-    model = generate_model(args, num_ego_class, num_actor_class).cuda()
+    
 
     if 'mvit' == args.model_name:
         params = set_lr(model)#
@@ -645,27 +656,30 @@ if __name__ == '__main__':
         else:
             state_dict = checkpoint
 
-        # 2. Xử lý lệch tiền tố 'module.' do DDP/Accelerate
-        new_state_dict = {}
-        model_keys = set(model.state_dict().keys())
-        
-        # Kiểm tra xem mô hình hiện tại có tiền tố 'module.' hay không
-        model_has_module = any(k.startswith('module.') for k in model_keys)
-        checkpoint_has_module = any(k.startswith('module.') for k in state_dict.keys())
-
+        # 2. Xóa các prefix ngoài ý muốn ('module.', '_orig_mod.')
+        clean_state_dict = {}
         for k, v in state_dict.items():
-            name = k
-            if checkpoint_has_module and not model_has_module:
-                name = name.replace('module.', '', 1)  # Bỏ tiền tố module.
-            elif not checkpoint_has_module and model_has_module:
-                name = f'module.{name}'               # Thêm tiền tố module.
-            new_state_dict[name] = v
+            new_k = k
+            if new_k.startswith("module."):
+                new_k = new_k[len("module."):]
+            if new_k.startswith("_orig_mod."):
+                new_k = new_k[len("_orig_mod."):]
+            clean_state_dict[new_k] = v
 
-        # 3. Nạp trọng số
-        missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
-        print(f"===> Nạp hoàn tất! Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}")
-        if len(missing) > 0:
-            print(f"     Ví dụ missing: {missing[:5]}")
+        # 3. Lọc bỏ các layer bị lệch shape (nếu có chỉnh sửa channel/dim trước đó)
+        model_dict = model.state_dict()
+        matched_state_dict = {}
+        mismatched_keys = []
+
+        for k, v in clean_state_dict.items():
+            if k in model_dict:
+                if v.shape == model_dict[k].shape:
+                    matched_state_dict[k] = v
+                else:
+                    mismatched_keys.append((k, v.shape, model_dict[k].shape))
+
+        # 4. Nạp weights vào model
+        model.load_state_dict(matched_state_dict, strict=False)
 
     # -----------	
     model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)
