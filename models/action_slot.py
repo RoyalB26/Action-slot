@@ -92,27 +92,28 @@ class SlotAttention(nn.Module):
         k = k.contiguous()
         v = v.contiguous()
 
-        # Dùng bmm thay vì einsum: [B, num_slots, d] x [B, d, N] -> [B, num_slots, N]
+        # 2. Tính tích vô hướng an toàn qua bmm: [B, N_slots, d] x [B, d, N_tokens] -> [B, N_slots, N_tokens]
         scale = float(d) ** -0.5
         dots = torch.bmm(q, k.transpose(1, 2)) * scale
-        print("1. Ok")
 
-        # 1. Khử triệt để NaN/Inf nếu có lọt vào từ trước
-        dots = torch.nan_to_num(dots, nan=0.0, posinf=20.0, neginf=-20.0)
+        # 3. Khử triệt để NaN/Inf tiềm ẩn trước khi vào hàm toán học
+        dots = torch.nan_to_num(dots, nan=0.0, posinf=15.0, neginf=-15.0)
 
-        # 2. Chống tràn số mũ an toàn
-        dots = torch.clamp(dots, min=-20.0, max=20.0)
-        print("2. OK")
+        # 4. Kẹp miền giá trị tránh bùng nổ số mũ
+        dots = torch.clamp(dots, min=-15.0, max=15.0)
 
-        # 3. Softmax an toàn dọc theo trục dim=1 (slots)
-        attn_ori = F.softmax(dots, dim=1) + 1e-6
-        print("3. OK")
+        # 5. Kỹ thuật trừ Max (Log-Sum-Exp Trick) giúp exp() <= 1.0, chống 100% overflow CUDA
+        dots_max = dots.max(dim=1, keepdim=True)[0].detach()
+        dots_stable = dots - dots_max
 
-        # 4. Kẹp mẫu số chống chia cho 0
-        denom = torch.clamp(attn_ori.sum(dim=-1, keepdim=True), min=1e-5)
-        attn = attn_ori / denom
-        print("4. OK")
-        # [B, num_slots, N] x [B, N, d] -> [B, num_slots, d]
+        # 6. Softmax trên trục Slot (dim=1) và thêm epsilon an toàn
+        attn_ori = F.softmax(dots_stable, dim=1) + 1e-6
+
+        # 7. Chuẩn hóa qua toàn bộ tokens, dùng add thay vì chia trần để triệt tiêu chia cho 0
+        denom = attn_ori.sum(dim=-1, keepdim=True)
+        attn = attn_ori / (denom + 1e-5)
+
+        # 8. Nhân với Value tensor
         slots = torch.bmm(attn, v)
         print("5. OK")
         slots = slots.reshape(b, -1, d)
