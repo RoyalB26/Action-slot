@@ -96,13 +96,19 @@ class SlotAttention(nn.Module):
         scale = float(d) ** -0.5
         dots = torch.bmm(q, k.transpose(1, 2)) * scale
         print("1. Ok")
-        # Chống tràn số mũ (overflow / underflow)
-        dots = torch.clamp(dots, min=-25.0, max=25.0)
+
+        # 1. Khử triệt để NaN/Inf nếu có lọt vào từ trước
+        dots = torch.nan_to_num(dots, nan=0.0, posinf=20.0, neginf=-20.0)
+
+        # 2. Chống tràn số mũ an toàn
+        dots = torch.clamp(dots, min=-20.0, max=20.0)
         print("2. OK")
-        # Softmax trên trục slot (dim=1)
-        attn_ori = dots.softmax(dim=1) + self.eps
+
+        # 3. Softmax an toàn dọc theo trục dim=1 (slots)
+        attn_ori = F.softmax(dots, dim=1) + 1e-6
         print("3. OK")
-        # Kẹp mẫu số chống chia cho 0 gây SIGFPE
+
+        # 4. Kẹp mẫu số chống chia cho 0
         denom = torch.clamp(attn_ori.sum(dim=-1, keepdim=True), min=1e-5)
         attn = attn_ori / denom
         print("4. OK")
