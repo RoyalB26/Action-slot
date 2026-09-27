@@ -140,18 +140,33 @@ def build_3d_grid(resolution):
 
 
 class SoftPositionEmbed3D(nn.Module):
-    def __init__(self, hidden_size, resolution):
-        """Builds the soft position embedding layer.
-        Args:
-        hidden_size: Size of input feature dimension.
-        resolution: Tuple of integers specifying width and height of grid.
-        """
+    def __init__(self, hidden_size, resolution=None):
         super().__init__()
         self.embedding = nn.Linear(6, hidden_size, bias=True)
-        self.register_buffer("grid", build_3d_grid(resolution))
+
     def forward(self, inputs):
-        grid = self.embedding(self.grid)
-        return inputs + grid
+        # inputs shape: [B, T, H, W, C]
+        b, t, h, w, c = inputs.shape
+        device = inputs.device
+        dtype = inputs.dtype
+
+        # Sinh trực tiếp grid động theo đúng shape thực tế của inputs trên GPU:
+        # steps >= 2 luôn đảm bảo không bao giờ bị chia cho 0
+        r_t = torch.linspace(0.0, 1.0, steps=t, device=device, dtype=dtype)
+        r_h = torch.linspace(0.0, 1.0, steps=h, device=device, dtype=dtype)
+        r_w = torch.linspace(0.0, 1.0, steps=w, device=device, dtype=dtype)
+
+        try:
+            grid_t, grid_h, grid_w = torch.meshgrid(r_t, r_h, r_w, indexing='ij')
+        except TypeError:
+            grid_t, grid_h, grid_w = torch.meshgrid(r_t, r_h, r_w)
+
+        grid = torch.stack([grid_t, grid_h, grid_w], dim=-1) # [T, H, W, 3]
+        grid = grid.unsqueeze(0)                             # [1, T, H, W, 3]
+        grid = torch.cat([grid, 1.0 - grid], dim=-1)         # [1, T, H, W, 6]
+
+        grid_embed = self.embedding(grid)                    # [1, T, H, W, C]
+        return inputs + grid_embed
 
 class TemporalSelfAttention(nn.Module):
     def __init__(self, dim, num_heads=4, qkv_bias=False, drop=0.0):
