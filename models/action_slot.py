@@ -86,7 +86,8 @@ class SlotAttention(nn.Module):
         k, v = self.to_k(inputs), self.to_v(inputs)
         slots = self.norm_slots(slots)
         q = self.to_q(slots)
-
+        print(f"--> [DEBUG Q] Min: {q.min().item():.4f} | Max: {q.max().item():.4f} | Norm: {q.norm().item():.4f}")
+        print(f"--> [DEBUG K] Min: {k.min().item():.4f} | Max: {k.max().item():.4f} | Norm: {k.norm().item():.4f}")
         # Đảm bảo contiguous trước khi nhân ma trận
         q = q.contiguous()
         k = k.contiguous()
@@ -95,6 +96,25 @@ class SlotAttention(nn.Module):
         # 2. Tính tích vô hướng an toàn qua bmm: [B, N_slots, d] x [B, d, N_tokens] -> [B, N_slots, N_tokens]
         scale = float(d) ** -0.5
         dots = torch.bmm(q, k.transpose(1, 2)) * scale
+
+        # --- BẮT ĐẦU ĐOẠN DEBUG CHI TIẾT CHO DOTS ---
+        # Đồng bộ GPU về CPU trước khi đọc để bắt lỗi chuẩn xác
+        torch.cuda.synchronize()
+
+        has_nan = torch.isnan(dots).any().item()
+        has_inf = torch.isinf(dots).any().item()
+        min_val = dots.min().item()
+        max_val = dots.max().item()
+        mean_val = dots.mean().item()
+
+        print(f"--> [DEBUG DOTS] Shape: {dots.shape}")
+        print(f"--> [DEBUG DOTS] Has NaN: {has_nan} | Has Inf: {has_inf}")
+        print(f"--> [DEBUG DOTS] Min: {min_val:.4f} | Max: {max_val:.4f} | Mean: {mean_val:.4f}")
+        
+        # Nếu muốn xem thử vài giá trị cụ thể của mẫu đầu tiên (Batch 0, Slot 0, 5 token đầu):
+        print(f"--> [DEBUG SAMPLE]: {dots[0, 0, :5].detach().cpu().numpy()}")
+        # --- KẾT THÚC ĐOẠN DEBUG ---
+        dots = dots.contiguous()
 
         # 3. Khử triệt để NaN/Inf tiềm ẩn trước khi vào hàm toán học
         dots = torch.nan_to_num(dots, nan=0.0, posinf=15.0, neginf=-15.0)
@@ -128,7 +148,7 @@ class SlotAttention(nn.Module):
 
     def forward(self, inputs, num_slots=None):
         b, nf, h, w, d = inputs.shape
-        
+
         # Khởi tạo slots động trực tiếp trên GPU của inputs
         mu = self.slots_mu.to(device=inputs.device, dtype=inputs.dtype).expand(b, self.num_slots, -1)
         sigma = self.slots_sigma.to(device=inputs.device, dtype=inputs.dtype).expand(b, self.num_slots, -1)
@@ -343,6 +363,8 @@ class ACTION_SLOT(nn.Module):
         self.pool = nn.AdaptiveAvgPool3d(output_size=1)
 
     def forward(self, x, box=False):
+        print(f"--> [DEBUG] x input: {x[0].norm().item():.4f}")
+
         seq_len = len(x)
         batch_size = x[0].shape[0]
         height, width = x[0].shape[2], x[0].shape[3]
@@ -387,13 +409,13 @@ class ACTION_SLOT(nn.Module):
 
         new_seq_len = x.shape[2]
         new_h, new_w = x.shape[3], x.shape[4]
-
+        print(f"--> [DEBUG] input: {x.norm().item():.4f}")
         x = self.conv3d(x)
         x = x.permute((0, 2, 3, 4, 1))
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1)).contiguous()
-
+        print(f"--> [DEBUG 1] Sau Conv3D Norm: {x.norm().item():.4f}")
         x = self.temporal_attn(x)
-
+        print(f"--> [DEBUG 2] Sau TemporalAttn Norm: {x.norm().item():.4f}")
         # 1. Trích xuất object slots & masks
         object_slots, obj_attns = self.object_attention(x)
         if obj_attns.shape[1] == object_slots.shape[1] + 1:

@@ -1,0 +1,236 @@
+[33mfd0f860[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m update
+[33mff3e192[m update
+[33mc143c04[m update
+[33ma1e8bcc[m update
+[33m7fa16d3[m update
+[33mac11f51[m update
+[33m62bc97d[m update
+[33m5008149[m update
+[33m77a9269[m update
+[33m6f77e2f[m update get_3d_slot
+[33m443415e[m update get_3d_slot
+[33md0cc8f2[m update get_3d_slot
+[33ma999172[m update get_3d_slot
+[33md429847[m update get_3d_slot
+[33m1d0a019[m update loss
+[33m3e11d3e[m update loss
+[33mfa72532[m update
+[33me60be01[m update
+[33md38b62c[m update obj attn loss
+[33mdc481b8[m update logging
+[33mcbb8b7c[m update
+[33mb3e8b79[m update
+[33md735793[m update
+[33mc0fa7d9[m update
+[33m59139a6[m update
+[33m043bcb9[m update
+[33mdcbf3ce[m update
+[33m35f9d87[m Update Readme
+[33m24a13f2[m Update Readme
+[33m79e57c2[m Add training and evaluation taco dataset for only objects and actions
+[33m6236633[m Update eval taco for 6 classes
+[33mccd6b8f[m Result on decompose to objects
+[33m528abb1[m Add new train and val labels
+[33m7461f6c[m update action_slot_query
+[33m34bcb67[m Fix file problems in scripts
+[33m687d4d4[m Update taco.py
+[33m297d201[m Update README.md
+[33m24b6dc9[m Update README.md
+[33m3c4555d[m Update README.md
+[33md388cb2[m Update README.md
+[33m3261ac0[m Update README.md
+[33m22cde59[m Update README.md
+[33m58f6620[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33mff11f54[m Update parser.py
+[33mabf1b94[m Update README.md
+[33mc15ec7d[m Update README.md
+[33m9c07b3d[m Update README.md
+[33m83c4ef1[m Update README.md
+[33mc50b870[m Update README.md
+[33mb392b49[m Update loss.py
+[33mf47e665[m Update README.md
+[33m9636371[m Update taco.py
+[33mfee7452[m Update README.md
+[33m1697848[m Update action_slot.py
+[33mb4c84ac[m Update taco.py
+[33m1d04727[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33m9cfa9f3[m debug taco
+[33m265ff7b[m Update README.md
+[33mf18af4d[m Update eval_taco.py
+[33m9a3441b[m Update eval_taco.py
+[33m2f8574a[m Create taco_action_slot_best_model.pth
+[33m4205676[m Update README.md
+[33mcfdd966[m Update README.md
+[33m0ab948c[m Update README.md
+[33m6e8a9df[m Update README.md
+[33m688db5d[m Update README.md
+[33mb273414[m path name
+[33mac3200a[m challenge
+[33meff133b[m Update README.md
+[33mefe2d44[m Update README.md
+[33m8e7d958[m update
+[33medbe4a4[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33mf95785d[m Update taco.py
+[33mb935f99[m Update README.md
+[33m1a50f61[m Update README.md
+[33m9167fed[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33me43e7e2[m Update README.md
+[33ma9f5169[m challenge
+[33m405c428[m Update README.md
+[33m8c42bef[m update
+[33m727ce03[m update
+[33m8168ea6[m Delete scripts/opt.py
+[33m693ca5c[m Delete scripts/read_label.py
+[33mf88a3a4[m Delete scripts/plot.py
+[33m65bac68[m Update README.md
+[33m1f1f462[m optimize code
+[33m6ccb70c[m Update taco.py
+[33m3104a06[m path
+[33ma31a481[m env
+[33macdf62c[m Update README.md
+[33mf47f2e7[m Update README.md
+[33m6ad2f00[m Update README.md
+[33m5885607[m Create att_module.py
+[33m50e87b9[m Delete datasets/.DS_Store
+[33me7ca936[m Delete scripts/.DS_Store
+[33mf437512[m Delete .DS_Store
+[33m91cbdab[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33m7b42a62[m fixed bugs
+[33m797433e[m Update README.md
+[33ma7d8721[m Update README.md
+[33m9b2caa4[m Update README.md
+[33m076a50b[m Update README.md
+[33m936308b[m Update README.md
+[33m756597c[m update
+[33ma5e7e38[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33m8185f43[m update
+[33m9e3054f[m Update README.md
+[33m09c2061[m Update README.md
+[33mc8013a5[m Update README.md
+[33m92379b3[m Update README.md
+[33m88b8317[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33m3b90575[m Create taco_attn.gif
+[33m7d9b27c[m Update README.md
+[33mbcd1735[m update
+[33m49d0651[m Update README.md
+[33m52de0cb[m Update README.md
+[33m1dae757[m Update README.md
+[33mde1638b[m Update README.md
+[33m1c73830[m Update README.md
+[33m532225b[m Update README.md
+[33ma6412d2[m Update README.md
+[33m0787550[m Update README.md
+[33m9fb8f07[m Update README.md
+[33m56b7f7f[m Update README.md
+[33m17ae8f6[m Update README.md
+[33mc088f04[m Update README.md
+[33m36fdd85[m Update README.md
+[33m119b2ef[m Update README.md
+[33mac5ec1f[m Update README.md
+[33m1810f71[m Update README.md
+[33m0b58d76[m Update README.md
+[33m040f32c[m update
+[33m90664c4[m Update README.md
+[33m95c9306[m Update nuscenes.py
+[33m132e903[m Update eval_taco.py
+[33mb1aecb9[m update
+[33m087445f[m update
+[33m614f4f7[m Update parser_eval.py
+[33m1bcc90f[m Update parser_eval.py
+[33m1dbd3d3[m eval
+[33m6414ce1[m update
+[33m96f0e03[m eval
+[33m4b6e4d2[m eval
+[33m5a1d731[m delete files
+[33mfbb7903[m Update train_nuscenes.py
+[33m87aa430[m Update eval_taco.py
+[33m6678566[m transfer
+[33m3780859[m Update train_oats.py
+[33m6d1e2c8[m Update mask2box.py
+[33m56b808d[m Update model.py
+[33m06cfc00[m Update train_oats.py
+[33md922430[m Update nuscenes.py
+[33mffb8154[m deeplab
+[33m1177934[m Update eval_oats.py
+[33md07bc47[m transfer nuscenes
+[33m373bdd4[m Update train_taco.py
+[33m6216bab[m Update oats.py
+[33mb7d200b[m Update taco.py
+[33m63c66bf[m Update train_nuscenes.py
+[33mb261204[m transfer
+[33meef6b1e[m Update nuscenes.py
+[33m85eb906[m Update train_nuscenes.py
+[33m04549df[m viz
+[33m7fc7ca5[m transfer learning for nuscenes
+[33md2ec6ad[m Update nuscenes.py
+[33md84e592[m Update train_nuscenes.py
+[33me74fad2[m bg_loss
+[33mee28149[m nuscenes
+[33m4388c43[m nuscenes
+[33ma7ff78a[m Update train_oats.py
+[33m529dcb3[m Update train_oats.py
+[33m59fcbd9[m Update train_taco.py
+[33m2ea9bbb[m Update taco.py
+[33m4b2aa9c[m nuscenes
+[33m743799e[m Merge branch 'main' of https://github.com/HCIS-Lab/Action-Slot
+[33m4f5c8b0[m eval
+[33me600171[m Update train_oats.py
+[33m12b7260[m Update oats.py
+[33m66e1e86[m Update train_oats.py
+[33mef8243f[m Update train_oats.py
+[33m20aefd7[m Update train_oats.py
+[33m1c5e82b[m eval
+[33m02e284f[m nuscenes
+[33m4a9987d[m nuscenes_label
+[33m9766067[m Create mask2box.py
+[33mb99a581[m oats
+[33m0073670[m Update train_taco.py
+[33m217b44d[m Update train_taco.py
+[33md0a95a6[m Update train_taco.py
+[33m4a931b4[m Update classifier.py
+[33m34461ff[m Update taco.py
+[33m3d20fa8[m r50
+[33m3af6603[m Update train_taco.py
+[33maa74202[m Update parser.py
+[33m114111c[m attn res
+[33mc1f6fe5[m attn shape
+[33mf633aae[m Update train_taco.py
+[33m4a23d74[m Update train_taco.py
+[33m1b8d5ae[m inception
+[33m4b249b1[m taco town03
+[33mf0c99d1[m Update taco.py
+[33m55529ea[m inception
+[33m50b9af0[m taco mean
+[33maef5460[m Update taco.py
+[33m76c0bd4[m Update train_taco.py
+[33mff200d1[m Update taco.py
+[33m9407f6b[m Update parser.py
+[33m72e86c7[m Create loss.py
+[33m08261ca[m Update train_taco.py
+[33me3e8b13[m Update train_taco.py
+[33me063846[m Update model.py
+[33m115104e[m Update parser.py
+[33m64d4bd1[m update
+[33mfb36d98[m update
+[33m3e1c315[m update
+[33ma2d9224[m update
+[33mf4dbf6e[m Update train_taco.py
+[33mf1b16ce[m update
+[33m3c5fbdd[m models
+[33m7e910a6[m update
+[33m4281929[m update
+[33mf3da91e[m Delete downsample.py
+[33madcb64e[m update
+[33m520f224[m classifier
+[33mad9f3f8[m Update retrieval_head.py
+[33m8e6d3c1[m update
+[33m314a32b[m update
+[33m895a65d[m Update train_taco.py
+[33m523ecd4[m update
+[33mcf97f65[m Update parser.py
+[33m645de2d[m Create downsample.py
+[33m513bb33[m update
+[33m51f345a[m road
+[33m9edd6db[m road
+[33m57d4c77[m init
+[33maa9037c[m Initial commit

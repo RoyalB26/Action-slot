@@ -93,7 +93,10 @@ class Engine(object):
         self.bestval = 1e10
         self.best_mAP = 1e-5
         self.reset_log()
-        
+        curr_dev = torch.cuda.current_device()
+        self.device = torch.device(f"cuda:{curr_dev}")
+        print("DEVICE: ", self.device)
+
     def reset_log(self):
         self.loss_epoch = 0.
         self.ego_loss_epoch = 0.
@@ -113,23 +116,41 @@ class Engine(object):
         self.bg_union = AverageMeter()
 
     def step(self,batch,mode):
-        print("1. Đã lấy xong batch từ DataLoader")
+
+        for k in batch:
+            if isinstance(batch[k],torch.Tensor):
+                batch[k] = batch[k].to(self.args.device)
+        
         video_in = batch['videos']
-        print("--> Type video_in:", type(video_in))
-        first_frame = video_in[0] # Shape: [B, 3, 256, 768]
-        print(f"--> [DEBUG STEP] video_in[0] shape: {first_frame.shape}")
-        print(f"--> [DEBUG STEP] Min: {first_frame.min().item():.4f} | Max: {first_frame.max().item():.4f} | Mean: {first_frame.mean():.4f}")
-        print(f"--> [DEBUG STEP] Batch sample 0 Min: {first_frame[0].min().item():.4f} | Max: {first_frame[0].max().item():.4f}")
-        if isinstance(video_in, list):
-            print("--> Len video_in list:", len(video_in))
-            print("--> Shape video_in[0]:", video_in[0].shape)
-            print("--> Min/Max/Mean video_in[0]:", video_in[0].min().item(), video_in[0].max().item(), video_in[0].mean().item())
-        elif isinstance(video_in, torch.Tensor):
-            print("--> Shape video_in tensor:", video_in.shape)
-            print("--> Min/Max/Mean video_in:", video_in.min().item(), video_in.max().item(), video_in.mean().item())
+        if self.args.box:
+            box_in = batch['box']
+            if isinstance(box_in,np.ndarray):
+                boxes = torch.from_numpy(box_in).to(self.args.device, dtype=torch.bfloat16)
+            else:
+                boxes = box_in.to(self.args.device, dtype=torch.bfloat16)
         inputs = []
-        for i in range(self.args.seq_len):
-            inputs.append(video_in[i].to(self.args.device, dtype=torch.float32))
+        for i in range(seq_len):
+            src = video_in[i]
+            print(f"\n--> [DEBUG {i}] video_in CPU: shape={src.shape}, min={src.min().item():.4f}, max={src.max().item():.4f}")
+
+            # TEST A: Dùng .clone() để tách rời khỏi IPC shared memory của DataLoader
+            src_cloned = src.detach().clone()
+            
+            # Chuyển lên GPU bằng Float32 trước để test đường truyền DMA
+            frame_gpu_f32 = src_cloned.to(self.device, non_blocking=False)
+            test_back_to_cpu = frame_gpu_f32.cpu()
+            print("--> Kéo ngược về CPU min/max:", test_back_to_cpu.min().item(), test_back_to_cpu.max().item())
+            torch.cuda.synchronize()
+            print(f"--> [TEST A - clone() -> GPU f32] min={frame_gpu_f32.min().item():.4f}, max={frame_gpu_f32.max().item():.4f}")
+
+            # TEST B: Ép kiểu sang bfloat16 ngay trên GPU
+            frame_tensor = frame_gpu_f32.to(dtype=torch.bfloat16)
+            torch.cuda.synchronize()
+            print(f"--> [TEST B - GPU f32 -> GPU bf16] min={frame_tensor.min().item():.4f}, max={frame_tensor.max().item():.4f}")
+
+            inputs.append(frame_tensor)
+
+        # In kiểm tra lại
         print(f"--> [DEBUG TRƯỚC MODEL] inputs[0] Shape: {inputs[0].shape}")
         print(f"--> [DEBUG TRƯỚC MODEL] inputs[0] Min: {inputs[0].min().item():.4f} | Max: {inputs[0].max().item():.4f} | Norm: {inputs[0].norm().item():.4f}")
         # --------------------------------------------
@@ -700,8 +721,8 @@ if __name__ == '__main__':
     logging.info("initialize val set")
     val_set = TACO(args=args, split='val')
     model = generate_model(args, num_ego_class, num_actor_class).cuda()
-    dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True, drop_last=True)    
-    dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True, drop_last=True)
+    dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=False, drop_last=True)    
+    dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=False, drop_last=True)
     # Model
     
 

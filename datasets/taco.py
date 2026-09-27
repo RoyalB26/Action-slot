@@ -401,6 +401,7 @@ class TACO(Dataset):
     
         data['videos'] = to_np(data['videos'], self.args.model_name, self.args.backbone)
         data['bg_seg'] = to_np_no_norm(data['bg_seg'])
+
         return data
 
 
