@@ -32,6 +32,7 @@ from loss import ActionSlotLoss
 from utils import AverageMeter
 from accelerate import Accelerator
 from accelerate import DistributedDataParallelKwargs
+from torch.cuda.amp import autocast
 import logging
 import warnings
 
@@ -130,24 +131,27 @@ class Engine(object):
         if self.args.box:
             box_in = batch['box']
             if isinstance(box_in,np.ndarray):
-                boxes = torch.from_numpy(box_in).to(self.args.device, dtype=torch.float32)
+                boxes = torch.from_numpy(box_in).to(self.args.device, dtype=torch.bfloat16)
             else:
-                boxes = box_in.to(self.args.device, dtype=torch.float32)
+                boxes = box_in.to(self.args.device, dtype=torch.bfloat16)
         inputs = []
         for i in range(seq_len):
-            inputs.append(video_in[i].to(self.args.device, dtype=torch.float32))
+            inputs.append(video_in[i].to(self.args.device, dtype=torch.bfloat16))
 
         # --------------------------------------------
         attn = None
         # object-based models
         if self.args.box:
-            pred_ego, pred_actor = self.model(inputs, boxes)
+            with autocast(dtype=torch.bfloat16):
+                pred_ego, pred_actor = self.model(inputs, boxes)
 
         else:
             if 'slot' in self.args.model_name or 'mvit' in self.args.model_name:
-                pred_ego, pred_actor, attn = self.model(inputs)
+                with autocast(dtype=torch.bfloat16):
+                    pred_ego, pred_actor, attn = self.model(inputs)
             else:
-                pred_ego, pred_actor = self.model(inputs)
+                with autocast(dtype=torch.bfloat16):
+                    pred_ego, pred_actor = self.model(inputs)
         loss_dict = self.criterion({'ego':pred_ego,'actor':pred_actor,'attn':attn},batch, False if mode == 'train' else True)
         if self.args.parallel:
             for _, v in loss_dict.items():
@@ -210,7 +214,7 @@ class Engine(object):
             self.label_actor_list.append(batch['slot_eval_gt'].cpu().numpy())
         else:
             pred_actor = torch.sigmoid(pred_actor)
-            self.map_pred_actor_list.append(pred_actor.detach().cpu().numpy())
+            self.map_pred_actor_list.append(pred_actor.detach().float().cpu().numpy())
             self.label_actor_list.append(actor.detach().cpu().numpy())
         
         actor_loss, ego_loss = actor_loss.mean(), ego_loss.mean()
@@ -248,7 +252,7 @@ class Engine(object):
         # Train loop
         self.num_batches = len(dataloader_train)
         for data in tqdm(dataloader_train):
-            self.step(data,'train')
+                self.step(data,'train')
         if scheduler is not None:
             scheduler.step()
 
