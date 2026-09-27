@@ -107,9 +107,10 @@ class Engine(object):
         self.loss_epoch = 0.
         self.ego_loss_epoch = 0.
         self.seg_loss_epoch = 0.
-        self.attn_loss_epoch= 0.
+        self.attn_loss_epoch = 0.
         self.action_attn_loss_epoch = 0.
         self.bg_attn_loss_epoch = 0.
+        self.obj_slot_loss_epoch = 0.   # <-- Thêm biến này
         self.actor_loss_epoch = 0.
         self.correct_ego = 0
         self.total_ego = 0
@@ -156,31 +157,33 @@ class Engine(object):
 
         ego_loss = loss_dict['ego']
         if ego_loss is None:
-            ego_loss = torch.Tensor([0.0])
+            ego_loss = torch.Tensor([0.0]).to(self.args.device)
         actor_loss = loss_dict['actor']
         action_attn_loss, bg_attn_loss = loss_dict['attn']['attn_loss'], loss_dict['attn']['bg_attn_loss']
+        obj_slot_loss = loss_dict.get('obj_slot_loss', torch.tensor(0.0).to(self.args.device))
 
+        attn_loss = torch.tensor(0.0).to(self.args.device)
         if self.criterion.attn_loss_type == 1:
             attn_loss = action_attn_loss
-
         elif self.criterion.attn_loss_type == 2:
             attn_loss = action_attn_loss * self.args.action_attn_weight
-
             self.attn_loss_epoch += float(attn_loss.item())
             self.action_attn_loss_epoch += float(action_attn_loss.item())
-
         elif self.criterion.attn_loss_type == 3:
             attn_loss = self.args.action_attn_weight * action_attn_loss + self.args.bg_attn_weight * bg_attn_loss
-
             self.attn_loss_epoch += float(attn_loss.item())
             self.action_attn_loss_epoch += float(action_attn_loss.item())
             self.bg_attn_loss_epoch += float(bg_attn_loss.item())
-            
         elif self.criterion.attn_loss_type == 4:
             attn_loss = self.args.bg_attn_weight * bg_attn_loss
-
             self.attn_loss_epoch += float(attn_loss.item())
             self.bg_attn_loss_epoch += float(bg_attn_loss.item())
+
+        # Tổng hợp loss huấn luyện: bổ sung thêm obj_slot_loss
+        loss = actor_loss + self.args.ego_loss_weight * ego_loss + attn_loss + obj_slot_loss
+
+        self.loss_epoch += float(loss.item())
+        self.obj_slot_loss_epoch += float(obj_slot_loss.item())
 
         if 'slot' in self.args.model_name and (self.args.action_attn_weight>0. or  self.args.bg_attn_weight>0. or self.args.obj_mask):
             loss = actor_loss + self.args.ego_loss_weight*ego_loss + attn_loss
@@ -280,6 +283,10 @@ class Engine(object):
             print(attn_loss_epoch)
             logging.info(f'attn loss: {attn_loss_epoch}')
 
+            obj_loss_epoch = self.obj_slot_loss_epoch / self.num_batches
+            print(f'obj_slot loss: {obj_loss_epoch:.4f}')
+            logging.info(f'obj_slot loss: {obj_loss_epoch:.4f}')
+            
             if self.args.action_attn_weight > 0:
                 action_attn_loss_epoch = self.action_attn_loss_epoch / self.num_batches
                 print('action_attn_loss')
@@ -291,6 +298,8 @@ class Engine(object):
                 print('bg_attn_loss_epoch')
                 print(bg_attn_loss_epoch)
                 logging.info(f'bg_attn_loss_epoch: {bg_attn_loss_epoch}')
+
+
 
         print('-' * 20)
         logging.info('-' * 20)

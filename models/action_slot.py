@@ -423,13 +423,15 @@ class ACTION_SLOT(nn.Module):
 
         x = self.temporal_attn(x)
 
-        object_slots, attn_masks = self.object_attention(x)
-        if attn_masks.shape[1] == object_slots.shape[1] + 1:
-            attn_masks_obj = attn_masks[:, 1:, :]  # [B, obj_slot, thw]
+        object_slots, obj_attns = self.object_attention(x)
+        
+        # Tách Background mask nếu có bg_slot (7 slots -> lấy 6 object slots)
+        if obj_attns.shape[1] == object_slots.shape[1] + 1:
+            attn_masks_obj = obj_attns[:, 1:, :]  # [B, 6, thw]
         else:
-            attn_masks_obj = attn_masks
+            attn_masks_obj = obj_attns
 
-        # 2. Chiếu ngược về từng patch: [B, thw, obj_slot] x [B, obj_slot, C] -> [B, thw, C]
+        # 2. Chiếu ngược về từng patch: [B, thw, 6] x [B, 6, C] -> [B, thw, C]
         slot_per_patch = torch.bmm(attn_masks_obj.transpose(1, 2), object_slots)
 
         B = x.shape[0]
@@ -437,17 +439,15 @@ class ACTION_SLOT(nn.Module):
         H, W = self.resolution[0], self.resolution[1]  # 8, 24
         T_orig = slot_per_patch.shape[1] // (H * W)    # 16
 
-        # 1. Reshape về 5D: [B, T, H, W, C]
-        slot_per_patch_5d = slot_per_patch.view(B, T_orig, H, W, C)
+        # 3. Reshape 5D và nén thời gian qua Temporal Conv3D
+        slot_per_patch_5d = slot_per_patch.view(B, T_orig, H, W, C).permute(0, 4, 1, 2, 3)
+        slot_per_patch_1frame = self.temporal_pool_conv(slot_per_patch_5d).permute(0, 2, 3, 4, 1)
 
-        # 2. Đưa về chuẩn Conv3D: [B, C, T, H, W]
-        slot_per_patch_5d = slot_per_patch_5d.permute(0, 4, 1, 2, 3)
-
-        # 3. Đi qua Temporal Conv3D: [B, C, 16, 8, 24] -> [B, C, 1, 8, 24]
-        slot_per_patch_1frame = self.temporal_pool_conv(slot_per_patch_5d)
-
-        # 4. Trả lại dạng [B, 1, 8, 24, C] để khớp với x
-        slot_per_patch_1frame = slot_per_patch_1frame.permute(0, 2, 3, 4, 1)
+        # 4. Hồi tiếp có kiểm soát qua cổng gamma và feedback_proj
+        x = x + self.gamma * self.feedback_proj(slot_per_patch_1frame)
+        
+        # 5. Đi vào Action Slot Attention
+        x, attn_masks = self.slot_attention(x)
         x = x + self.gamma * self.feedback_proj(slot_per_patch_1frame)
         
         x, attn_masks = self.slot_attention(x)
@@ -474,10 +474,12 @@ class ACTION_SLOT(nn.Module):
 
 
         x = self.drop(x)
+        attn_dict = {'action_attn': attn_masks, 'obj_attn': obj_attns}
+
         if self.num_ego_class != 0:
             ego_x = self.drop(ego_x)
             ego_x, x = self.head(x, ego_x)
-            return ego_x, x, attn_masks
+            return ego_x, x, attn_dict
         else:
             x = self.head(x)
-            return x, attn_masks
+            return x, attn_dict

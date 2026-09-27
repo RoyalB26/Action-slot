@@ -16,6 +16,16 @@ class ActionSlotLoss(nn.Module):
         self.ego_ce = nn.CrossEntropyLoss(reduction='mean')
         self.actor_loss_type =  self._parse_actor_loss(args)
         self.attn_loss_type = self._parse_attn_loss(args)
+        self.obj_slot_bce = nn.BCELoss(reduction='mean')
+
+        mapping = torch.zeros(64, dtype=torch.long)
+        mapping[0:12] = 0    # c
+        mapping[12:24] = 1   # c+
+        mapping[24:36] = 2   # b
+        mapping[36:48] = 3   # b+
+        mapping[48:56] = 4   # p
+        mapping[56:64] = 5   # p+
+        self.register_buffer('action_to_obj', mapping)
 
     def _parse_actor_loss(self,args):
         if ('slot' in args.model_name and not args.allocated_slot) or args.box:
@@ -204,10 +214,63 @@ class ActionSlotLoss(nn.Module):
 
         return loss
 
+    def object_slot_loss(self, obj_attn, label):
+        if obj_attn is None:
+            return torch.tensor(0.0, device=self.args.device)
+
+        B, K, thw = obj_attn.shape
+        loss_obj = torch.tensor(0.0, device=self.args.device)
+
+        # 1. Tách Background Slot nếu K == 7
+        if self.args.bg_slot and K == 7:
+            action_obj_attn = obj_attn[:, 1:, :]   # [B, 6, thw]
+        else:
+            action_obj_attn = obj_attn             # [B, 6, thw]
+
+        actor_label = label['actor']  # [B, 64]
+        
+        # 2. Giám sát sự tồn tại (Weak supervision từ actor presence)
+        obj_presence_gt = torch.zeros(B, 6, device=actor_label.device)
+        for obj_idx in range(6):
+            action_indices = (self.action_to_obj == obj_idx).nonzero(as_tuple=True)[0]
+            obj_presence_gt[:, obj_idx] = (actor_label[:, action_indices].sum(dim=-1) > 0).float()
+
+        # Slot vắng mặt (absent) -> triệt tiêu về 0
+        absent_mask = (obj_presence_gt == 0.0)
+        if absent_mask.any():
+            empty_slots_attn = action_obj_attn[absent_mask]
+            loss_obj = loss_obj + 0.5 * self.obj_slot_bce(empty_slots_attn, torch.zeros_like(empty_slots_attn))
+
+        # 3. Spatial Compactness Loss (Entropy) cho slot đang xuất hiện
+        present_mask = (obj_presence_gt == 1.0)
+        if present_mask.any():
+            active_slots = action_obj_attn[present_mask]
+            p = active_slots / (active_slots.sum(dim=-1, keepdim=True) + 1e-8)
+            entropy = -torch.sum(p * torch.log(p + 1e-8), dim=-1)
+            loss_obj = loss_obj + 0.05 * entropy.mean()
+
+        return loss_obj
+
     def forward(self, pred, label, validate=False):
+        ego_loss = self.ego_loss(pred['ego'], label['ego'])
 
-        ego_loss = self.ego_loss(pred['ego'],label['ego'])
-        actor_loss = self.actor_loss(pred['actor'],label['actor'])
-        attention_loss = self.attn_loss(pred['attn'],label,pred['actor'],validate)
+        # Bóc tách action_attn và obj_attn từ dictionary
+        if isinstance(pred['attn'], dict):
+            action_attn = pred['attn']['action_attn']
+            obj_attn = pred['attn']['obj_attn']
+        else:
+            action_attn = pred['attn']
+            obj_attn = None
 
-        return {"ego":ego_loss, "actor": actor_loss, "attn":attention_loss}
+        actor_loss = self.actor_loss(pred['actor'], label['actor'])
+        attention_loss = self.attn_loss(action_attn, label, pred['actor'], validate)
+        
+        # Tính thêm object loss
+        obj_slot_loss = self.object_slot_loss(obj_attn, label)
+
+        return {
+            "ego": ego_loss,
+            "actor": actor_loss,
+            "attn": attention_loss,
+            "obj_slot_loss": obj_slot_loss
+        }
