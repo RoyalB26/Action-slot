@@ -122,7 +122,7 @@ class Engine(object):
         self.bg_union = AverageMeter()
 
     def step(self,batch,mode):
-
+        print("1. Đã lấy xong batch từ DataLoader")
         for k in batch:
             if isinstance(batch[k],torch.Tensor):
                 batch[k] = batch[k].to(self.args.device)
@@ -140,6 +140,7 @@ class Engine(object):
 
         # --------------------------------------------
         attn = None
+        print("2. Chuẩn bị chạy model forward")
         # object-based models
         if self.args.box:
             pred_ego, pred_actor = self.model(inputs, boxes)
@@ -149,6 +150,8 @@ class Engine(object):
                 pred_ego, pred_actor, attn = self.model(inputs)
             else:
                 pred_ego, pred_actor = self.model(inputs)
+
+        print("3. Đã chạy xong model forward, vào criterion")
         loss_dict = self.criterion({'ego':pred_ego,'actor':pred_actor,'attn':attn},batch, False if mode == 'train' else True)
         if self.args.parallel:
             for _, v in loss_dict.items():
@@ -219,7 +222,7 @@ class Engine(object):
         actor_loss, ego_loss = actor_loss.mean(), ego_loss.mean()
         self.actor_loss_epoch += float(actor_loss.item())
         self.ego_loss_epoch += float(ego_loss.item())
-        
+        print("4. Đã tính xong loss, chuẩn bị backward")
         if mode == 'train':
             self.optimizer.zero_grad()
             self.accelerator.backward(loss)
@@ -233,6 +236,7 @@ class Engine(object):
             if loss_dict['attn']['bg_inter'] is not None:
                 self.bg_inter.update(loss_dict['attn']['bg_inter'])
                 self.bg_union.update(loss_dict['attn']['bg_union'])
+        print("Xong 1 step")
 
     def _parallel(self):
         self.model = nn.DataParallel(self.model)
