@@ -82,36 +82,41 @@ class SlotAttention(nn.Module):
         self.register_buffer("slots", slots)
     
     def get_3d_slot(self, slots, inputs):
+        print("--> vao get_3d_slot thanh cong")
         b, l, h, w, d = inputs.shape
+        print("--> shape inputs truoc PE:", inputs.shape)
+        
         inputs = self.pe(inputs)
+        print("--> qua self.pe thanh cong")
+        
         inputs = torch.reshape(inputs, (b, -1, d))
-
         inputs = self.LN(inputs)
+        print("--> qua LN thanh cong")
         inputs = self.FC1(inputs)
         inputs = F.relu(inputs)
         inputs = self.FC2(inputs)
+        print("--> qua FC2 thanh cong")
 
         b, n, d = inputs.shape
         inputs = self.norm_input(inputs)
         k, v = self.to_k(inputs), self.to_v(inputs)
         slots = self.norm_slots(slots)
         q = self.to_q(slots)
+        print("--> qua norm va linear QKV thanh cong")
 
-        # 1. Kẹp khoảng giá trị dots chống tràn số mũ
         dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
         dots = torch.clamp(dots, min=-30.0, max=30.0)
-
-        # 2. Softmax an toàn
         attn_ori = dots.softmax(dim=1) + self.eps
         print("get 3d slot in")
-        # 3. Kẹp mẫu số chống chia cho 0 gây SIGFPE
+
         denom = attn_ori.sum(dim=-1, keepdim=True)
         denom = torch.clamp(denom, min=1e-5)
         attn = attn_ori / denom
         print("get 3d slot out")
-        slots = torch.einsum('bjd,bij->bid', v, attn)
 
+        slots = torch.einsum('bjd,bij->bid', v, attn)
         slots = slots.reshape(b, -1, d)
+
         if self.allocated_slot:
             slots = slots[:, :self.num_actor_class, :]
         else:
@@ -123,8 +128,17 @@ class SlotAttention(nn.Module):
     def forward(self, inputs, num_slots=None):
         print("slot attention in")
         b, nf, h, w, d = inputs.shape
-        # Luôn ép slots về cùng device và kiểu dữ liệu với tensor inputs
-        slots = self.slots.to(device=inputs.device, dtype=inputs.dtype).expand(b, -1, -1)
+        print(f"--> inputs device: {inputs.device}, dtype: {inputs.dtype}")
+
+        # Khoi tao slots dong truc tiep tren GPU
+        if hasattr(self, 'slots') and self.slots is not None:
+            slots = self.slots.to(device=inputs.device, dtype=inputs.dtype).expand(b, -1, -1)
+        else:
+            mu = self.slots_mu.to(device=inputs.device, dtype=inputs.dtype).expand(b, self.num_slots, -1)
+            sigma = self.slots_sigma.to(device=inputs.device, dtype=inputs.dtype).expand(b, self.num_slots, -1)
+            slots = mu + sigma * torch.randn(mu.shape, device=inputs.device, dtype=inputs.dtype)
+        
+        print("--> chuan bi vao get_3d_slot voi slots shape:", slots.shape)
         slots_out, attns = self.get_3d_slot(slots, inputs)
         print("slot attention out")
         return slots_out, attns
