@@ -95,27 +95,28 @@ class SlotAttention(nn.Module):
         # Dùng bmm thay vì einsum: [B, num_slots, d] x [B, d, N] -> [B, num_slots, N]
         scale = float(d) ** -0.5
         dots = torch.bmm(q, k.transpose(1, 2)) * scale
-        
+        print("1. Ok")
         # Chống tràn số mũ (overflow / underflow)
         dots = torch.clamp(dots, min=-25.0, max=25.0)
-
+        print("2. OK")
         # Softmax trên trục slot (dim=1)
         attn_ori = dots.softmax(dim=1) + self.eps
-
+        print("3. OK")
         # Kẹp mẫu số chống chia cho 0 gây SIGFPE
         denom = torch.clamp(attn_ori.sum(dim=-1, keepdim=True), min=1e-5)
         attn = attn_ori / denom
-
+        print("4. OK")
         # [B, num_slots, N] x [B, N, d] -> [B, num_slots, d]
         slots = torch.bmm(attn, v)
-
+        print("5. OK")
         slots = slots.reshape(b, -1, d)
         if self.allocated_slot:
             slots = slots[:, :self.num_actor_class, :]
         else:
             slots = slots[:, :self.num_slots, :]
-            
+        print("6. OK")
         slots = slots + self.fc2(F.relu(self.fc1(self.norm_pre_ff(slots))))
+        print("7. OK")
         return slots, attn_ori
 
     def forward(self, inputs, num_slots=None):
