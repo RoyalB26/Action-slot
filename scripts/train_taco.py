@@ -30,8 +30,6 @@ from datasets.taco import TACO
 from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
-from accelerate import Accelerator
-from accelerate import DistributedDataParallelKwargs
 import logging
 import warnings
 
@@ -76,27 +74,20 @@ class Engine(object):
         
     """
 
-    def __init__(self, args, model, optimizer, num_actor_class, accelerator, scheduler=None):
+    def __init__(self, args, model, optimizer, num_actor_class, scheduler=None):
         self.args = args
   
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.accelerator = accelerator
-        raw_model = self.accelerator.unwrap_model(self.model) if hasattr(self, 'accelerator') and self.accelerator is not None else self.model
-
-        if hasattr(raw_model, 'resolution'):
-            attention_res = (raw_model.resolution[0] * args.bg_upsample, raw_model.resolution[1] * args.bg_upsample)
-        elif hasattr(self.model, 'module') and hasattr(self.model.module, 'resolution'):
-            attention_res = (self.model.module.resolution[0] * args.bg_upsample, self.model.module.resolution[1] * args.bg_upsample)
-        elif hasattr(self.model, 'resolution'):
-            attention_res = (self.model.resolution[0] * args.bg_upsample, self.model.resolution[1] * args.bg_upsample)
+        self.num_actor_class = num_actor_class
+        if hasattr(self.model, 'resolution'):
+            attention_res = (self.model.resolution[0]*args.bg_upsample, self.model.resolution[1]*args.bg_upsample)
         else:
-            attention_res = (16 * args.bg_upsample, 16 * args.bg_upsample)
-
+            attention_res = None
         self.criterion = ActionSlotLoss(args, num_actor_class, attention_res).to(self.args.device)
 
-        self.cur_epoch = args.start_epoch
+        self.cur_epoch = 0
         self.train_loss = []
         self.val_loss = []
         self.bestval = 1e10
@@ -123,21 +114,24 @@ class Engine(object):
 
     def step(self,batch,mode):
         print("1. Đã lấy xong batch từ DataLoader")
-        for k in batch:
-            if isinstance(batch[k],torch.Tensor):
-                batch[k] = batch[k].to(self.args.device)
-        
         video_in = batch['videos']
-        if self.args.box:
-            box_in = batch['box']
-            if isinstance(box_in,np.ndarray):
-                boxes = torch.from_numpy(box_in).to(self.args.device, dtype=torch.float32)
-            else:
-                boxes = box_in.to(self.args.device, dtype=torch.float32)
+        print("--> Type video_in:", type(video_in))
+        first_frame = video_in[0] # Shape: [B, 3, 256, 768]
+        print(f"--> [DEBUG STEP] video_in[0] shape: {first_frame.shape}")
+        print(f"--> [DEBUG STEP] Min: {first_frame.min().item():.4f} | Max: {first_frame.max().item():.4f} | Mean: {first_frame.mean():.4f}")
+        print(f"--> [DEBUG STEP] Batch sample 0 Min: {first_frame[0].min().item():.4f} | Max: {first_frame[0].max().item():.4f}")
+        if isinstance(video_in, list):
+            print("--> Len video_in list:", len(video_in))
+            print("--> Shape video_in[0]:", video_in[0].shape)
+            print("--> Min/Max/Mean video_in[0]:", video_in[0].min().item(), video_in[0].max().item(), video_in[0].mean().item())
+        elif isinstance(video_in, torch.Tensor):
+            print("--> Shape video_in tensor:", video_in.shape)
+            print("--> Min/Max/Mean video_in:", video_in.min().item(), video_in.max().item(), video_in.mean().item())
         inputs = []
-        for i in range(seq_len):
+        for i in range(self.args.seq_len):
             inputs.append(video_in[i].to(self.args.device, dtype=torch.float32))
-
+        print(f"--> [DEBUG TRƯỚC MODEL] inputs[0] Shape: {inputs[0].shape}")
+        print(f"--> [DEBUG TRƯỚC MODEL] inputs[0] Min: {inputs[0].min().item():.4f} | Max: {inputs[0].max().item():.4f} | Norm: {inputs[0].norm().item():.4f}")
         # --------------------------------------------
         attn = None
         print("2. Chuẩn bị chạy model forward")
@@ -225,7 +219,7 @@ class Engine(object):
         print("4. Đã tính xong loss, chuẩn bị backward")
         if mode == 'train':
             self.optimizer.zero_grad()
-            self.accelerator.backward(loss)
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             
@@ -698,8 +692,6 @@ if __name__ == '__main__':
     elif args.taco_class == 'Object':
         num_actor_class = 6
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
 
     print('initialize train set')
     logging.info("initialize train set")
@@ -769,8 +761,7 @@ if __name__ == '__main__':
         model.load_state_dict(matched_state_dict, strict=False)
 
     # -----------	
-    model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)
-    trainer = Engine(args,model,optimizer,num_actor_class,accelerator, scheduler)
+    trainer = Engine(args,model,optimizer,num_actor_class,scheduler)
     # Create logdir
     print(f'Checkpoint path: {logdir}')
     logging.info(f'Checkpoint path: {logdir}')
