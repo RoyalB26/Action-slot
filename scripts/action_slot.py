@@ -104,18 +104,29 @@ class SlotAttention(nn.Module):
         q = self.to_q(slots)
         print("--> qua norm va linear QKV thanh cong")
 
-        dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
-        dots = torch.clamp(dots, min=-30.0, max=30.0)
-        attn_ori = dots.softmax(dim=1) + self.eps
+        q = q.contiguous()
+        k = k.contiguous()
+        v = v.contiguous()
+
+        # Thay einsum bằng torch.bmm: [B, 7, 256] x [B, 256, 3072] -> [B, 7, 3072]
+        scale = float(d) ** -0.5
+        dots = torch.bmm(q, k.transpose(1, 2)) * scale
+        
+        # Chặn tràn số an toàn trước khi vào softmax
+        dots = torch.clamp(dots, min=-20.0, max=20.0)
+
+        # Softmax trên trục slot (dim=1)
+        attn_ori = dots.softmax(dim=1) + 1e-6
         print("get 3d slot in")
 
+        # Chuẩn hóa an toàn
         denom = attn_ori.sum(dim=-1, keepdim=True)
         denom = torch.clamp(denom, min=1e-5)
         attn = attn_ori / denom
         print("get 3d slot out")
 
-        slots = torch.einsum('bjd,bij->bid', v, attn)
-        slots = slots.reshape(b, -1, d)
+        # Thay einsum tiếp theo bằng torch.bmm: [B, 7, 3072] x [B, 3072, 256] -> [B, 7, 256]
+        slots = torch.bmm(attn, v)
 
         if self.allocated_slot:
             slots = slots[:, :self.num_actor_class, :]
