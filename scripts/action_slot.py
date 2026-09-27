@@ -82,76 +82,40 @@ class SlotAttention(nn.Module):
         self.register_buffer("slots", slots)
     
     def get_3d_slot(self, slots, inputs):
-        print("--> vao get_3d_slot thanh cong")
         b, l, h, w, d = inputs.shape
-        print("--> shape inputs truoc PE:", inputs.shape)
-        
         inputs = self.pe(inputs)
-        print("--> qua self.pe thanh cong")
-        
         inputs = torch.reshape(inputs, (b, -1, d))
+
         inputs = self.LN(inputs)
-        print("--> qua LN thanh cong")
         inputs = self.FC1(inputs)
         inputs = F.relu(inputs)
         inputs = self.FC2(inputs)
-        print("--> qua FC2 thanh cong")
+
+        slots_prev = slots
 
         b, n, d = inputs.shape
         inputs = self.norm_input(inputs)
         k, v = self.to_k(inputs), self.to_v(inputs)
         slots = self.norm_slots(slots)
         q = self.to_q(slots)
-        print("--> qua norm va linear QKV thanh cong")
+        dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
+        attn_ori = dots.softmax(dim=1) + self.eps
+        attn = attn_ori / attn_ori.sum(dim=-1, keepdim=True)
+        slots = torch.einsum('bjd,bij->bid', v, attn)
 
-        q = q.contiguous()
-        k = k.contiguous()
-        v = v.contiguous()
-
-        # Thay einsum bằng torch.bmm: [B, 7, 256] x [B, 256, 3072] -> [B, 7, 3072]
-        scale = float(d) ** -0.5
-        dots = torch.bmm(q, k.transpose(1, 2)) * scale
-        
-        # Chặn tràn số an toàn trước khi vào softmax
-        dots = torch.clamp(dots, min=-20.0, max=20.0)
-
-        # Softmax trên trục slot (dim=1)
-        attn_ori = dots.softmax(dim=1) + 1e-6
-        print("get 3d slot in")
-
-        # Chuẩn hóa an toàn
-        denom = attn_ori.sum(dim=-1, keepdim=True)
-        denom = torch.clamp(denom, min=1e-5)
-        attn = attn_ori / denom
-        print("get 3d slot out")
-
-        # Thay einsum tiếp theo bằng torch.bmm: [B, 7, 3072] x [B, 3072, 256] -> [B, 7, 256]
-        slots = torch.bmm(attn, v)
-
+        slots = slots.reshape(b, -1, d)
         if self.allocated_slot:
             slots = slots[:, :self.num_actor_class, :]
         else:
             slots = slots[:, :self.num_slots, :]
-            
         slots = slots + self.fc2(F.relu(self.fc1(self.norm_pre_ff(slots))))
         return slots, attn_ori
 
-    def forward(self, inputs, num_slots=None):
-        print("slot attention in")
+    def forward(self, inputs, num_slots = None):
         b, nf, h, w, d = inputs.shape
-        print(f"--> inputs device: {inputs.device}, dtype: {inputs.dtype}")
-
-        # Khoi tao slots dong truc tiep tren GPU
-        if hasattr(self, 'slots') and self.slots is not None:
-            slots = self.slots.to(device=inputs.device, dtype=inputs.dtype).expand(b, -1, -1)
-        else:
-            mu = self.slots_mu.to(device=inputs.device, dtype=inputs.dtype).expand(b, self.num_slots, -1)
-            sigma = self.slots_sigma.to(device=inputs.device, dtype=inputs.dtype).expand(b, self.num_slots, -1)
-            slots = mu + sigma * torch.randn(mu.shape, device=inputs.device, dtype=inputs.dtype)
-        
-        print("--> chuan bi vao get_3d_slot voi slots shape:", slots.shape)
+        slots = self.slots.expand(b,-1,-1)
         slots_out, attns = self.get_3d_slot(slots, inputs)
-        print("slot attention out")
+        # b, n, c
         return slots_out, attns
 
 
@@ -165,33 +129,18 @@ def build_3d_grid(resolution):
 
 
 class SoftPositionEmbed3D(nn.Module):
-    def __init__(self, hidden_size, resolution=None):
+    def __init__(self, hidden_size, resolution):
+        """Builds the soft position embedding layer.
+        Args:
+        hidden_size: Size of input feature dimension.
+        resolution: Tuple of integers specifying width and height of grid.
+        """
         super().__init__()
         self.embedding = nn.Linear(6, hidden_size, bias=True)
-
+        self.register_buffer("grid", build_3d_grid(resolution))
     def forward(self, inputs):
-        # inputs shape: [B, T, H, W, C]
-        b, t, h, w, c = inputs.shape
-        device = inputs.device
-        dtype = inputs.dtype
-
-        # Sinh trực tiếp grid động theo đúng shape thực tế của inputs trên GPU:
-        # steps >= 2 luôn đảm bảo không bao giờ bị chia cho 0
-        r_t = torch.linspace(0.0, 1.0, steps=t, device=device, dtype=dtype)
-        r_h = torch.linspace(0.0, 1.0, steps=h, device=device, dtype=dtype)
-        r_w = torch.linspace(0.0, 1.0, steps=w, device=device, dtype=dtype)
-
-        try:
-            grid_t, grid_h, grid_w = torch.meshgrid(r_t, r_h, r_w, indexing='ij')
-        except TypeError:
-            grid_t, grid_h, grid_w = torch.meshgrid(r_t, r_h, r_w)
-
-        grid = torch.stack([grid_t, grid_h, grid_w], dim=-1) # [T, H, W, 3]
-        grid = grid.unsqueeze(0)                             # [1, T, H, W, 3]
-        grid = torch.cat([grid, 1.0 - grid], dim=-1)         # [1, T, H, W, 6]
-
-        grid_embed = self.embedding(grid)                    # [1, T, H, W, C]
-        return inputs + grid_embed
+        grid = self.embedding(self.grid)
+        return inputs + grid
 
 class TemporalSelfAttention(nn.Module):
     def __init__(self, dim, num_heads=4, qkv_bias=False, drop=0.0):
@@ -471,11 +420,10 @@ class ACTION_SLOT(nn.Module):
         x = x.permute((0, 2, 3, 4, 1))
         # [bs, n, w, h, c]
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1))
-        print("fwd 1: qua conv3d x shape =", x.shape)
+
         x = self.temporal_attn(x)
-        print("fwd 2: qua temporal_attn")
+
         object_slots, attn_masks = self.object_attention(x)
-        print("fwd 3: qua object_attention, slots shape =", object_slots.shape, "attn shape =", attn_masks.shape)
         if attn_masks.shape[1] == object_slots.shape[1] + 1:
             attn_masks_obj = attn_masks[:, 1:, :]  # [B, obj_slot, thw]
         else:
@@ -488,16 +436,16 @@ class ACTION_SLOT(nn.Module):
         C = slot_per_patch.shape[-1]
         H, W = self.resolution[0], self.resolution[1]  # 8, 24
         T_orig = slot_per_patch.shape[1] // (H * W)    # 16
-        print(f"fwd 4: T_orig = {T_orig}, H = {H}, W = {W}")
+
         # 1. Reshape về 5D: [B, T, H, W, C]
         slot_per_patch_5d = slot_per_patch.view(B, T_orig, H, W, C)
-        print("fwd 5: tensor vào temporal_pool_conv có shape =", slot_per_patch_5d.shape)
+
         # 2. Đưa về chuẩn Conv3D: [B, C, T, H, W]
         slot_per_patch_5d = slot_per_patch_5d.permute(0, 4, 1, 2, 3)
 
         # 3. Đi qua Temporal Conv3D: [B, C, 16, 8, 24] -> [B, C, 1, 8, 24]
         slot_per_patch_1frame = self.temporal_pool_conv(slot_per_patch_5d)
-        print("fwd 6: qua temporal_pool_conv thành công")
+
         # 4. Trả lại dạng [B, 1, 8, 24, C] để khớp với x
         slot_per_patch_1frame = slot_per_patch_1frame.permute(0, 2, 3, 4, 1)
         x = x + self.gamma * self.feedback_proj(slot_per_patch_1frame)

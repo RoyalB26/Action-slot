@@ -33,11 +33,30 @@ def get_test_parser():
     parser.add_argument('--model_index', type=int, default=-1)
     parser.add_argument('--cp', type=str, default='best_model.pth')
     parser.add_argument('--scale', type=float, default=-1.0)
-    
+    parser.add_argument('--plot', help="", action="store_true")
+    parser.add_argument('--plot_threshold', type=float, default=0, help='')
     # others
     parser.add_argument('--gt', help="", action="store_true")
 
 
     args = parser.parse_args()
+    if args.dataset == 'oats' and args.oats_test_split != '0':
+        based_log = args.dataset + '_' + args.oats_test_split + '_test'
+    else:
+        based_log = args.dataset + '_test'
+    based_log = os.path.join(based_log, args.model_name)
+    if not os.path.isdir(based_log):
+        os.makedirs(based_log)
+    if args.model_name in ['action_slot', 'slot_savi', 'slot_mo', 'slot_vps']:
+        logdir = os.path.join(
+            based_log,
+            'num_slots' + str(args.num_slots) + '_'
+            +'obj_mask' + str(args.obj_mask) 
+            )
+    else:
+        logdir = based_log
 
-    return args
+    if args.model_index != -1:
+        logdir = logdir + '\n' + 'idx: ' + str(args.model_index)
+
+    return args, logdir
