@@ -32,6 +32,7 @@ from loss import ActionSlotLoss
 from utils import AverageMeter
 from accelerate import Accelerator
 from accelerate import DistributedDataParallelKwargs
+import logging
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -220,8 +221,8 @@ class Engine(object):
             self.optimizer.zero_grad()
             self.accelerator.backward(loss)
             self.optimizer.step()
-            if self.scheduler is not None:
-                self.scheduler.step()
+            # if self.scheduler is not None:
+            #     self.scheduler.step()
         else:
             if loss_dict['attn']['action_inter'] is not None:
                 self.action_inter.update(loss_dict['attn']['action_inter'])
@@ -239,13 +240,14 @@ class Engine(object):
         model_name = self.args.model_name
         if scheduler is not None:
             print(f"Current epoch: {self.cur_epoch}, lr: {scheduler.get_last_lr()}")
+            logging.info(f"Current epoch: {self.cur_epoch}, lr: {scheduler.get_last_lr()}")
         else:
             print(f"Current epoch: {self.cur_epoch}")
-
+            logging.info(f"Current epoch: {self.cur_epoch}")
         self.model = self.model.train()
         # Train loop
         self.num_batches = len(dataloader_train)
-        for data in dataloader_train:
+        for data in tqdm(dataloader_train):
             self.step(data,'train')
         if scheduler is not None:
             scheduler.step()
@@ -264,30 +266,46 @@ class Engine(object):
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
         ego_loss_epoch = self.ego_loss_epoch / self.num_batches
 
-        print(f'acc of the ego: {self.correct_ego/self.total_ego}')
+        ego_acc = self.correct_ego / self.total_ego
+        print(f'acc of the ego: {ego_acc}')
+        logging.info(f'acc of the ego: {ego_acc}')
 
         print('total loss')
         print(loss_epoch)
+        logging.info(f'total loss: {loss_epoch}')
 
-        if self.args.action_attn_weight > 0 or self.args.bg_attn_weight >0:
+        if self.args.action_attn_weight > 0 or self.args.bg_attn_weight > 0:
             attn_loss_epoch = self.attn_loss_epoch / self.num_batches
             print('attn loss:')
             print(attn_loss_epoch)
+            logging.info(f'attn loss: {attn_loss_epoch}')
+
             if self.args.action_attn_weight > 0:
-                action_attn_loss_epoch = self.action_attn_loss_epoch /self.num_batches
+                action_attn_loss_epoch = self.action_attn_loss_epoch / self.num_batches
                 print('action_attn_loss')
                 print(action_attn_loss_epoch)
-            if args.bg_attn_weight >0:
+                logging.info(f'action_attn_loss: {action_attn_loss_epoch}')
+
+            if self.args.bg_attn_weight > 0:
                 bg_attn_loss_epoch = self.bg_attn_loss_epoch / self.num_batches
                 print('bg_attn_loss_epoch')
                 print(bg_attn_loss_epoch)
+                logging.info(f'bg_attn_loss_epoch: {bg_attn_loss_epoch}')
 
-        print('-'*20)
+        print('-' * 20)
+        logging.info('-' * 20)
+
         print('actor loss:')
         print(actor_loss_epoch)
+        logging.info(f'actor loss: {actor_loss_epoch}')
+
         print('ego loss:')
         print(ego_loss_epoch)
+        logging.info(f'ego loss: {ego_loss_epoch}')
+
         print(f'(train) mAP of the actor: {mAP}')
+        logging.info(f'(train) mAP of the actor: {mAP}')
+
         self.train_loss.append(loss_epoch)
         self.cur_epoch += 1
         
@@ -297,30 +315,39 @@ class Engine(object):
         save_cp = False
         self.reset_log()
         with torch.no_grad():	
-            for data in dataloader:
+            for data in tqdm(dataloader):
                 self.step(data,'val')
             
-            if args.action_attn_weight>0. or args.bg_attn_weight>0.:
+            if args.action_attn_weight > 0. or args.bg_attn_weight > 0.:
                 attn_loss_epoch = self.attn_loss_epoch / self.num_batches
                 print('attn loss:')
                 print(attn_loss_epoch)
-                if args.action_attn_weight>0.:
-                    action_attn_loss_epoch = self.action_attn_loss_epoch /self.num_batches
+                logging.info(f'attn loss: {attn_loss_epoch}')
+
+                if args.action_attn_weight > 0.:
+                    action_attn_loss_epoch = self.action_attn_loss_epoch / self.num_batches
                     print('action_attn_loss')
                     print(action_attn_loss_epoch)
-                if args.bg_attn_weight>0.:
+                    logging.info(f'action_attn_loss: {action_attn_loss_epoch}')
+
+                if args.bg_attn_weight > 0.:
                     bg_attn_loss_epoch = self.bg_attn_loss_epoch / self.num_batches
                     print('bg_attn_loss_epoch')
                     print(bg_attn_loss_epoch)
-                
-            if args.action_attn_weight >0 and args.bg_attn_weight>0:
+                    logging.info(f'bg_attn_loss_epoch: {bg_attn_loss_epoch}')
+
+            if args.action_attn_weight > 0 and args.bg_attn_weight > 0:
                 iou = self.action_inter.sum / (self.action_union.sum + 1e-10)
                 for i, val in enumerate(iou):
-                    print('Action IoU {0}: {1:.2f}'.format(i, val * 100))
+                    msg = 'Action IoU {0}: {1:.2f}'.format(i, val * 100)
+                    print(msg)
+                    logging.info(msg)
 
                 iou = self.bg_inter.sum / (self.bg_union.sum + 1e-10)
                 for i, val in enumerate(iou):
-                    print('BG IoU {0}: {1:.2f}'.format(i, val * 100))
+                    msg = 'BG IoU {0}: {1:.2f}'.format(i, val * 100)
+                    print(msg)
+                    logging.info(msg)
 
             map_pred_actor_list = np.stack(self.map_pred_actor_list, axis=0)
             label_actor_list = np.stack(self.label_actor_list, axis=0)
@@ -349,16 +376,31 @@ class Engine(object):
                         average=None)
 
                 print(f'(val) mAP: {mAP}')
+                logging.info(f'(val) mAP: {mAP}')
+
                 print(f'(val) mAP of z actions: {z_mAP}')
+                logging.info(f'(val) mAP of z actions: {z_mAP}')
+
                 print(f'(val) mAP of c actions: {c_mAP}')
+                logging.info(f'(val) mAP of c actions: {c_mAP}')
+
                 print('z per class: \n')
                 for ap in mAP_per_class[:12].tolist():
                     print("%.4f " % ap, end = ' ')
+                z_per_class_str = " ".join(f"{ap:.4f}" for ap in mAP_per_class[:12].tolist())
+                logging.info(f'z per class: {z_per_class_str}')
+
                 print('c per class: \n')
                 for ap in mAP_per_class[12:20].tolist():
                     print("%.4f " % ap, end =  " ")
-                print(f'acc of the ego: {self.correct_ego/self.total_ego}')
-                writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
+                c_per_class_str = " ".join(f"{ap:.4f}" for ap in mAP_per_class[12:20].tolist())
+                logging.info(f'c per class: {c_per_class_str}')
+
+                ego_acc = self.correct_ego / self.total_ego
+                print(f'acc of the ego: {ego_acc}')
+                logging.info(f'acc of the ego: {ego_acc}')
+
+                writer.add_scalar('ego', ego_acc, self.cur_epoch)   
 
                 if mAP > self.best_mAP:
                     self.best_mAP = mAP
@@ -369,7 +411,7 @@ class Engine(object):
                     ]
                     save_cp = True
                 print(f'best mAP : {self.best_mAP}')
-
+                logging.info(f'best mAP : {self.best_mAP}')
                 with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
                     f.write('epoch: ' + str(self.cur_epoch))
                     f.write('\n')
@@ -426,14 +468,23 @@ class Engine(object):
                         average=None)
 
                 print(f'(val) mAP: {mAP}')
+                logging.info(f'(val) mAP: {mAP}')
                 print(f'(val) mAP of the c: {c_mAP}')
+                logging.info(f'(val) mAP of the c: {c_mAP}')
                 print(f'(val) mAP of the b: {b_mAP}')
+                logging.info(f'(val) mAP of the b: {b_mAP}')
                 print(f'(val) mAP of the p: {p_mAP}')
+                logging.info(f'(val) mAP of the p: {p_mAP}')
                 print(f'(val) mAP of the c+: {group_c_mAP}')
+                logging.info(f'(val) mAP of the c+: {group_c_mAP}')
                 print(f'(val) mAP of the b+: {group_b_mAP}')
+                logging.info(f'(val) mAP of the b+: {group_b_mAP}')
                 print(f'(val) mAP of the p+: {group_p_mAP}')
+                logging.info(f'(val) mAP of the p+: {group_p_mAP}')
 
-                print(f'acc of the ego: {self.correct_ego/self.total_ego}')
+                ego_acc = self.correct_ego / self.total_ego
+                print(f'acc of the ego: {ego_acc}')
+                logging.info(f'acc of the ego: {ego_acc}')
                 writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
                 if mAP > self.best_mAP:
                     self.best_mAP = mAP
@@ -448,6 +499,7 @@ class Engine(object):
                     ]
                     save_cp = True
                 print(f'best mAP : {self.best_mAP}')
+                logging.info(f'best mAP : {self.best_mAP}')
 
                 with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
                     f.write('epoch: ' + str(self.cur_epoch))
@@ -501,16 +553,24 @@ class Engine(object):
                         label_actor_list,
                         map_pred_actor_list.astype(np.float32),	
                         average=None)
-
                 print(f'(val) mAP: {mAP}')
+                logging.info(f'(val) mAP: {mAP}')
                 print(f'(val) mAP of the c: {c_mAP}')
+                logging.info(f'(val) mAP of the c: {c_mAP}')
                 print(f'(val) mAP of the b: {b_mAP}')
+                logging.info(f'(val) mAP of the b: {b_mAP}')
                 print(f'(val) mAP of the p: {p_mAP}')
+                logging.info(f'(val) mAP of the p: {p_mAP}')
                 print(f'(val) mAP of the c+: {group_c_mAP}')
+                logging.info(f'(val) mAP of the c+: {group_c_mAP}')
                 print(f'(val) mAP of the b+: {group_b_mAP}')
+                logging.info(f'(val) mAP of the b+: {group_b_mAP}')
                 print(f'(val) mAP of the p+: {group_p_mAP}')
+                logging.info(f'(val) mAP of the p+: {group_p_mAP}')
 
-                print(f'acc of the ego: {self.correct_ego/self.total_ego}')
+                ego_acc = self.correct_ego / self.total_ego
+                print(f'acc of the ego: {ego_acc}')
+                logging.info(f'acc of the ego: {ego_acc}')
                 writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
                 if mAP > self.best_mAP:
                     self.best_mAP = mAP
@@ -525,6 +585,7 @@ class Engine(object):
                     ]
                     save_cp = True
                     print(f'best mAP : {self.best_mAP}')
+                    logging.info(f'best mAP : {self.best_mAP}')
 
                 with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
                     f.write('epoch: ' + str(self.cur_epoch))
@@ -590,11 +651,19 @@ class Engine(object):
             tqdm.write('====== Overwrote best model ======>')
 
 if __name__ == '__main__':
+
+    logging.basicConfig(
+        filename='train.log',          # Tên file log sẽ tạo ra
+        filemode='a',                  # 'a' = ghi tiếp, 'w' = ghi đè file mới
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        level=logging.INFO             # Bắt buộc đặt level là INFO trở lên
+    )
+
     args, logdir = get_parser()
     print(args)
+    logging.info(args)
     logdir = logdir.replace(':', '_').replace('\n', '_')
     logdir = logdir.replace(" ", "")
-    print(logdir)
     # 2. Lấy đường dẫn tuyệt đối
     abs_logdir = os.path.abspath(logdir)
 
@@ -613,13 +682,15 @@ if __name__ == '__main__':
         num_actor_class = 20
     elif args.taco_class == 'Object':
         num_actor_class = 6
-    
+
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
 
     print('initialize train set')
+    logging.info("initialize train set")
     train_set = TACO(args=args, split='train')
     print('initialize val set')
+    logging.info("initialize val set")
     val_set = TACO(args=args, split='val')
     model = generate_model(args, num_ego_class, num_actor_class).cuda()
     dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True, drop_last=True)    
@@ -641,6 +712,7 @@ if __name__ == '__main__':
     if args.resume_from_checkpoint:
         model_path = os.path.join(args.cp)
         print(f"===> Đang nạp weights từ: {model_path}")
+        logging.info(f"===> Đang nạp weights từ: {model_path}")
         checkpoint = torch.load(model_path, map_location='cpu')
 
         # 1. Bóc tách dictionary nếu bị lồng key
@@ -686,7 +758,7 @@ if __name__ == '__main__':
     trainer = Engine(args,model,optimizer,num_actor_class,accelerator, scheduler)
     # Create logdir
     print(f'Checkpoint path: {logdir}')
-
+    logging.info(f'Checkpoint path: {logdir}')
     result_list = []
     for epoch in range(trainer.cur_epoch, args.epochs): 
         trainer.train()
@@ -696,6 +768,8 @@ if __name__ == '__main__':
                 trainer.save(is_best)
                 result_list.append(res)
     print('********** Best model **********')
+    logging.info('********** Best model **********')
     for s in trainer.best_log:
         print(s)
+        logging.info(s)
     plot_result(np.array(result_list),args)
