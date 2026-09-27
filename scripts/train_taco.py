@@ -226,7 +226,9 @@ class Engine(object):
         if mode == 'train':
             self.optimizer.zero_grad()
             self.accelerator.backward(loss)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
+            
             # if self.scheduler is not None:
             #     self.scheduler.step()
         else:
