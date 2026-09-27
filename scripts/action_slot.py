@@ -91,26 +91,24 @@ class SlotAttention(nn.Module):
         inputs = F.relu(inputs)
         inputs = self.FC2(inputs)
 
-        slots_prev = slots
-
         b, n, d = inputs.shape
         inputs = self.norm_input(inputs)
         k, v = self.to_k(inputs), self.to_v(inputs)
         slots = self.norm_slots(slots)
         q = self.to_q(slots)
-        
-        # 1. Giới hạn giá trị dot product để chống tràn số / underflow
+
+        # 1. Kẹp khoảng giá trị dots chống tràn số mũ
         dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
-        dots = torch.clamp(dots, min=-50.0, max=50.0)
+        dots = torch.clamp(dots, min=-30.0, max=30.0)
 
-        # 2. Softmax theo chiều slot (dim=1) và thêm eps an toàn
+        # 2. Softmax an toàn
         attn_ori = dots.softmax(dim=1) + self.eps
-
-        # 3. Chuẩn hóa an toàn có clamp mẫu số chống chia cho 0
+        print("get 3d slot in")
+        # 3. Kẹp mẫu số chống chia cho 0 gây SIGFPE
         denom = attn_ori.sum(dim=-1, keepdim=True)
-        denom = torch.clamp(denom, min=1e-6)
+        denom = torch.clamp(denom, min=1e-5)
         attn = attn_ori / denom
-
+        print("get 3d slot out")
         slots = torch.einsum('bjd,bij->bid', v, attn)
 
         slots = slots.reshape(b, -1, d)
@@ -118,14 +116,17 @@ class SlotAttention(nn.Module):
             slots = slots[:, :self.num_actor_class, :]
         else:
             slots = slots[:, :self.num_slots, :]
+            
         slots = slots + self.fc2(F.relu(self.fc1(self.norm_pre_ff(slots))))
         return slots, attn_ori
 
-    def forward(self, inputs, num_slots = None):
+    def forward(self, inputs, num_slots=None):
+        print("slot attention in")
         b, nf, h, w, d = inputs.shape
-        # Đảm bảo slots nằm đúng GPU và kiểu dữ liệu với inputs
+        # Luôn ép slots về cùng device và kiểu dữ liệu với tensor inputs
         slots = self.slots.to(device=inputs.device, dtype=inputs.dtype).expand(b, -1, -1)
         slots_out, attns = self.get_3d_slot(slots, inputs)
+        print("slot attention out")
         return slots_out, attns
 
 
