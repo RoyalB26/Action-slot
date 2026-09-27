@@ -98,9 +98,19 @@ class SlotAttention(nn.Module):
         k, v = self.to_k(inputs), self.to_v(inputs)
         slots = self.norm_slots(slots)
         q = self.to_q(slots)
+        
+        # 1. Giới hạn giá trị dot product để chống tràn số / underflow
         dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
+        dots = torch.clamp(dots, min=-50.0, max=50.0)
+
+        # 2. Softmax theo chiều slot (dim=1) và thêm eps an toàn
         attn_ori = dots.softmax(dim=1) + self.eps
-        attn = attn_ori / attn_ori.sum(dim=-1, keepdim=True)
+
+        # 3. Chuẩn hóa an toàn có clamp mẫu số chống chia cho 0
+        denom = attn_ori.sum(dim=-1, keepdim=True)
+        denom = torch.clamp(denom, min=1e-6)
+        attn = attn_ori / denom
+
         slots = torch.einsum('bjd,bij->bid', v, attn)
 
         slots = slots.reshape(b, -1, d)
@@ -113,9 +123,9 @@ class SlotAttention(nn.Module):
 
     def forward(self, inputs, num_slots = None):
         b, nf, h, w, d = inputs.shape
-        slots = self.slots.expand(b,-1,-1)
+        # Đảm bảo slots nằm đúng GPU và kiểu dữ liệu với inputs
+        slots = self.slots.to(device=inputs.device, dtype=inputs.dtype).expand(b, -1, -1)
         slots_out, attns = self.get_3d_slot(slots, inputs)
-        # b, n, c
         return slots_out, attns
 
 
