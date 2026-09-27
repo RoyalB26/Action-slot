@@ -420,10 +420,11 @@ class ACTION_SLOT(nn.Module):
         x = x.permute((0, 2, 3, 4, 1))
         # [bs, n, w, h, c]
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1))
-
+        print("fwd 1: qua conv3d x shape =", x.shape)
         x = self.temporal_attn(x)
-
+        print("fwd 2: qua temporal_attn")
         object_slots, attn_masks = self.object_attention(x)
+        print("fwd 3: qua object_attention, slots shape =", object_slots.shape, "attn shape =", attn_masks.shape)
         if attn_masks.shape[1] == object_slots.shape[1] + 1:
             attn_masks_obj = attn_masks[:, 1:, :]  # [B, obj_slot, thw]
         else:
@@ -436,16 +437,16 @@ class ACTION_SLOT(nn.Module):
         C = slot_per_patch.shape[-1]
         H, W = self.resolution[0], self.resolution[1]  # 8, 24
         T_orig = slot_per_patch.shape[1] // (H * W)    # 16
-
+        print(f"fwd 4: T_orig = {T_orig}, H = {H}, W = {W}")
         # 1. Reshape về 5D: [B, T, H, W, C]
         slot_per_patch_5d = slot_per_patch.view(B, T_orig, H, W, C)
-
+        print("fwd 5: tensor vào temporal_pool_conv có shape =", slot_per_patch_5d.shape)
         # 2. Đưa về chuẩn Conv3D: [B, C, T, H, W]
         slot_per_patch_5d = slot_per_patch_5d.permute(0, 4, 1, 2, 3)
 
         # 3. Đi qua Temporal Conv3D: [B, C, 16, 8, 24] -> [B, C, 1, 8, 24]
         slot_per_patch_1frame = self.temporal_pool_conv(slot_per_patch_5d)
-
+        print("fwd 6: qua temporal_pool_conv thành công")
         # 4. Trả lại dạng [B, 1, 8, 24, C] để khớp với x
         slot_per_patch_1frame = slot_per_patch_1frame.permute(0, 2, 3, 4, 1)
         x = x + self.gamma * self.feedback_proj(slot_per_patch_1frame)
