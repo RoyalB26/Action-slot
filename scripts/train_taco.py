@@ -140,6 +140,7 @@ class Engine(object):
 
         # --------------------------------------------
         attn = None
+        pred_obj = None
         # object-based models
         if self.args.box:
             with autocast(dtype=torch.bfloat16):
@@ -148,11 +149,26 @@ class Engine(object):
         else:
             if 'slot' in self.args.model_name or 'mvit' in self.args.model_name:
                 with autocast(dtype=torch.bfloat16):
-                    pred_ego, pred_actor, attn = self.model(inputs)
+                    output = self.model(inputs)
+                    if len(output) == 4:
+                        pred_ego, pred_actor, attn, pred_obj = output
+                    else:
+                        pred_ego, pred_actor, attn = output
             else:
                 with autocast(dtype=torch.bfloat16):
                     pred_ego, pred_actor = self.model(inputs)
-        loss_dict = self.criterion({'ego':pred_ego,'actor':pred_actor,'attn':attn},batch, False if mode == 'train' else True)
+
+
+        loss_dict = self.criterion(
+                    {
+                        'ego': pred_ego,
+                        'actor': pred_actor,
+                        'attn': attn,
+                        'pred_obj': pred_obj
+                    },
+                    batch, 
+                    False if mode == 'train' else True
+                )
         if self.args.parallel:
             for _, v in loss_dict.items():
                 if isinstance(v,torch.Tensor):
@@ -182,7 +198,7 @@ class Engine(object):
             self.attn_loss_epoch += float(attn_loss.item())
             self.bg_attn_loss_epoch += float(bg_attn_loss.item())
 
-        # Tổng hợp loss huấn luyện: bổ sung thêm obj_slot_loss
+
         loss = actor_loss + self.args.ego_loss_weight * ego_loss + attn_loss + obj_slot_loss
 
         self.loss_epoch += float(loss.item())

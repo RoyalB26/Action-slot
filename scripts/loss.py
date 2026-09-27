@@ -214,42 +214,37 @@ class ActionSlotLoss(nn.Module):
 
         return loss
 
-    def object_slot_loss(self, obj_attn, label):
+    def object_slot_loss(self, obj_attn, obj_gt):
+        """
+        obj_attn: [B, K, thw] (K = 7 nếu có bg_slot, K = 6 nếu không có)
+        obj_gt:   [B, 6] (tensor float32 nhị phân trên cùng device)
+        """
         if obj_attn is None:
             return torch.tensor(0.0, device=self.args.device)
 
-        B, K, thw = obj_attn.shape
-        loss_obj = torch.tensor(0.0, device=self.args.device)
-
-        # 1. Tách Background Slot nếu K == 7
-        if self.args.bg_slot and K == 7:
-            action_obj_attn = obj_attn[:, 1:, :]   # [B, 6, thw]
+        # Tách Background mask nếu có bg_slot (7 slots -> lấy 6 object slots)
+        if self.args.bg_slot and obj_attn.shape[1] == 7:
+            action_obj_attn = obj_attn[:, 1:, :]  # [B, 6, thw]
         else:
             action_obj_attn = obj_attn             # [B, 6, thw]
 
-        actor_label = label['actor']  # [B, 64]
-        
-        # 2. Giám sát sự tồn tại (Weak supervision từ actor presence)
-        obj_presence_gt = torch.zeros(B, 6, device=actor_label.device)
-        for obj_idx in range(6):
-            action_indices = (self.action_to_obj == obj_idx).nonzero(as_tuple=True)[0]
-            obj_presence_gt[:, obj_idx] = (actor_label[:, action_indices].sum(dim=-1) > 0).float()
+        loss = torch.tensor(0.0, device=obj_attn.device)
 
-        # Slot vắng mặt (absent) -> triệt tiêu về 0
-        absent_mask = (obj_presence_gt == 0.0)
+        # 1. Triệt tiêu các slot vắng mặt (Absent slots -> ép attention mask về 0)
+        absent_mask = (obj_gt == 0.0)  # Tensor bool shape [B, 6]
         if absent_mask.any():
-            empty_slots_attn = action_obj_attn[absent_mask]
-            loss_obj = loss_obj + 0.5 * self.obj_slot_bce(empty_slots_attn, torch.zeros_like(empty_slots_attn))
+            empty_slots_attn = action_obj_attn[absent_mask]  # [num_absent, thw]
+            loss += 0.5 * F.binary_cross_entropy(empty_slots_attn, torch.zeros_like(empty_slots_attn))
 
-        # 3. Spatial Compactness Loss (Entropy) cho slot đang xuất hiện
-        present_mask = (obj_presence_gt == 1.0)
+        # 2. Ép co cụm không gian (Spatial Compactness / Entropy) cho các slot thực sự xuất hiện
+        present_mask = (obj_gt == 1.0)  # Tensor bool shape [B, 6]
         if present_mask.any():
-            active_slots = action_obj_attn[present_mask]
+            active_slots = action_obj_attn[present_mask]     # [num_present, thw]
             p = active_slots / (active_slots.sum(dim=-1, keepdim=True) + 1e-8)
             entropy = -torch.sum(p * torch.log(p + 1e-8), dim=-1)
-            loss_obj = loss_obj + 0.05 * entropy.mean()
+            loss += 0.05 * entropy.mean()
 
-        return loss_obj
+        return loss
 
     def forward(self, pred, label, validate=False):
         ego_loss = self.ego_loss(pred['ego'], label['ego'])
@@ -264,13 +259,35 @@ class ActionSlotLoss(nn.Module):
 
         actor_loss = self.actor_loss(pred['actor'], label['actor'])
         attention_loss = self.attn_loss(action_attn, label, pred['actor'], validate)
-        
-        # Tính thêm object loss
-        obj_slot_loss = self.object_slot_loss(obj_attn, label)
+
+        # ----------------------------------------------------
+        # Xây dựng ground-truth obj_gt [B, 6] từ label['actor'] [B, 64]
+        # ----------------------------------------------------
+        actor_label = label['actor']
+        B = actor_label.shape[0]
+        obj_gt = torch.zeros((B, 6), device=actor_label.device, dtype=torch.float32)
+        obj_gt[:, 0] = (actor_label[:, 0:12].sum(dim=-1) > 0).float()   # c 
+        obj_gt[:, 1] = (actor_label[:, 12:24].sum(dim=-1) > 0).float()  # c+
+        obj_gt[:, 2] = (actor_label[:, 24:36].sum(dim=-1) > 0).float()  # b 
+        obj_gt[:, 3] = (actor_label[:, 36:48].sum(dim=-1) > 0).float()  # b+
+        obj_gt[:, 4] = (actor_label[:, 48:56].sum(dim=-1) > 0).float()  # p 
+        obj_gt[:, 5] = (actor_label[:, 56:64].sum(dim=-1) > 0).float()  # p+
+
+        # 1. Loss attention mask (TRUYỀN ĐÚNG obj_gt THAY VÌ label)
+        obj_slot_loss = self.object_slot_loss(obj_attn, obj_gt)
+
+        # 2. Loss phân loại trực tiếp cho object slots từ obj_head
+        pred_obj = pred.get('pred_obj', None)
+        if pred_obj is not None:
+            obj_cls_loss = F.binary_cross_entropy_with_logits(pred_obj, obj_gt)
+        else:
+            obj_cls_loss = torch.tensor(0.0, device=self.args.device)
+
+        total_obj_loss = obj_slot_loss + obj_cls_loss
 
         return {
             "ego": ego_loss,
             "actor": actor_loss,
             "attn": attention_loss,
-            "obj_slot_loss": obj_slot_loss
+            "obj_slot_loss": total_obj_loss
         }

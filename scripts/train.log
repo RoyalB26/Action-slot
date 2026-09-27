@@ -1,63 +1,176 @@
-2026-09-27 12:15:05,058 - INFO - Namespace(dataset='taco', oats_test_split='0', root='/home/jovyan/taco_data', model_name='action_slot', backbone='x3d', num_slots=64, seq_len=16, allocated_slot=True, channel=256, box=False, bg_slot=True, action_attn_weight=1.0, bg_attn_weight=0.5, bg_mask=True, mask_every_frame=4, bg_upsample=4, obj_mask=False, flow=False, bce_pos_weight=10, ce_pos_weight=1, ce_neg_weight=0.05, ego_loss_weight=0.5, device='cuda', pretrain='', epochs=100, wd=0.07, lr=0.0005, scheduler=True, val_every=10, batch_size=24, num_workers=4, parallel=False, tune_block_idx=[0, 1, 2, -3, -2, -1], resume_from_checkpoint=False, start_epoch=0, model_index=-1, cp='best_model.pth', plot=False, plot_threshold=0, plot_mode='both', val_confusion=False, ego_motion=-1, scale=-1.0, test=False, gt=False, taco_class='both')
-2026-09-27 12:15:05,264 - INFO - initialize train set
-2026-09-27 12:15:33,373 - INFO - initialize val set
-2026-09-27 12:15:43,229 - INFO - Checkpoint path: taco_log/action_slot/num_slots_64_allocated_True_x3d_channel_256_bg_slot_True_bg_mask_True_action_attn_w_1.0_bg_attn_w_0.5_obj_mask_False_epoch_100_lr_0.0005_wd_0.07_bce_pos_weight_10_bg_upsample_4_ego_loss_weight_0.5
-2026-09-27 12:15:43,229 - INFO - Current epoch: 0, lr: [0.0005]
-2026-09-27 12:17:32,517 - INFO - acc of the ego: 0.6611842105263158
-2026-09-27 12:17:32,518 - INFO - total loss: 2.749261824708236
-2026-09-27 12:17:32,520 - INFO - attn loss: 0.10125882433433282
-2026-09-27 12:17:32,521 - INFO - obj_slot loss: 0.0000
-2026-09-27 12:17:32,522 - INFO - action_attn_loss: 0.006634655155306845
-2026-09-27 12:17:32,523 - INFO - bg_attn_loss_epoch: 0.18924833729601742
-2026-09-27 12:17:32,524 - INFO - --------------------
-2026-09-27 12:17:32,526 - INFO - actor loss: 0.8419456016599086
-2026-09-27 12:17:32,526 - INFO - ego loss: 0.8628529331140351
-2026-09-27 12:17:32,529 - INFO - (train) mAP of the actor: 0.04692513704872069
-2026-09-27 12:19:27,064 - INFO - attn loss: 0.5752928031837208
-2026-09-27 12:19:27,065 - INFO - action_attn_loss: 0.06254788958712627
-2026-09-27 12:19:27,065 - INFO - bg_attn_loss_epoch: 1.0254898261801715
-2026-09-27 12:19:27,065 - INFO - Action IoU 0: 100.00
-2026-09-27 12:19:27,065 - INFO - BG IoU 0: 92.22
-2026-09-27 12:19:27,110 - INFO - (val) mAP: 0.06621003506945689
-2026-09-27 12:19:27,110 - INFO - (val) mAP of the c: 0.07845554761246328
-2026-09-27 12:19:27,110 - INFO - (val) mAP of the b: 0.03989821034592141
-2026-09-27 12:19:27,110 - INFO - (val) mAP of the p: 0.06502308558603981
-2026-09-27 12:19:27,110 - INFO - (val) mAP of the c+: 0.07373890062134454
-2026-09-27 12:19:27,110 - INFO - (val) mAP of the b+: 0.06147398191096317
-2026-09-27 12:19:27,111 - INFO - (val) mAP of the p+: 0.08430723423357667
-2026-09-27 12:19:27,111 - INFO - acc of the ego: 0.7666325486182191
-2026-09-27 12:19:27,120 - INFO - best mAP : 0.06621003506945689
-2026-09-27 12:19:27,323 - INFO - Current epoch: 1, lr: [0.00055]
-2026-09-27 12:21:11,185 - INFO - acc of the ego: 0.8585526315789473
-2026-09-27 12:21:11,185 - INFO - total loss: 2.0886959182588676
-2026-09-27 12:21:11,185 - INFO - attn loss: 0.06705627642702638
-2026-09-27 12:21:11,185 - INFO - obj_slot loss: 0.0000
-2026-09-27 12:21:11,185 - INFO - action_attn_loss: 0.0064702456400386596
-2026-09-27 12:21:11,185 - INFO - bg_attn_loss_epoch: 0.12117206154946696
-2026-09-27 12:21:11,194 - INFO - --------------------
-2026-09-27 12:21:11,196 - INFO - actor loss: 0.7731108780492816
-2026-09-27 12:21:11,196 - INFO - ego loss: 0.40836160224780704
-2026-09-27 12:21:11,199 - INFO - (train) mAP of the actor: 0.0754593656824877
-2026-09-27 12:21:11,200 - INFO - Current epoch: 2, lr: [0.0006050000000000001]
-2026-09-27 12:22:54,772 - INFO - acc of the ego: 0.910453216374269
-2026-09-27 12:22:54,772 - INFO - total loss: 1.7491226342686437
-2026-09-27 12:22:54,773 - INFO - attn loss: 0.06585522058109443
-2026-09-27 12:22:54,775 - INFO - obj_slot loss: 0.0000
-2026-09-27 12:22:54,776 - INFO - action_attn_loss: 0.006493752221821954
-2026-09-27 12:22:54,777 - INFO - bg_attn_loss_epoch: 0.11872293689010437
-2026-09-27 12:22:54,778 - INFO - --------------------
-2026-09-27 12:22:54,778 - INFO - actor loss: 0.6557241526612064
-2026-09-27 12:22:54,778 - INFO - ego loss: 0.30596388432017546
-2026-09-27 12:22:54,785 - INFO - (train) mAP of the actor: 0.12235887271122155
-2026-09-27 12:22:54,787 - INFO - Current epoch: 3, lr: [0.0006655000000000002]
-2026-09-27 12:24:37,404 - INFO - acc of the ego: 0.9301900584795322
-2026-09-27 12:24:37,404 - INFO - total loss: 1.5375498857414513
-2026-09-27 12:24:37,405 - INFO - attn loss: 0.06441556979297546
-2026-09-27 12:24:37,405 - INFO - obj_slot loss: 0.0000
-2026-09-27 12:24:37,405 - INFO - action_attn_loss: 0.006543528304941822
-2026-09-27 12:24:37,405 - INFO - bg_attn_loss_epoch: 0.11574408327016913
-2026-09-27 12:24:37,407 - INFO - --------------------
-2026-09-27 12:24:37,407 - INFO - actor loss: 0.5888005482000217
-2026-09-27 12:24:37,409 - INFO - ego loss: 0.23111765008223684
-2026-09-27 12:24:37,410 - INFO - (train) mAP of the actor: 0.15309280088666033
-2026-09-27 12:24:37,411 - INFO - Current epoch: 4, lr: [0.0007320500000000003]
+2026-09-27 13:34:22,899 - INFO - Namespace(dataset='taco', oats_test_split='0', root='/home/jovyan/taco_data', model_name='action_slot', backbone='x3d', num_slots=64, seq_len=16, allocated_slot=True, channel=256, box=False, bg_slot=True, action_attn_weight=1.0, bg_attn_weight=0.5, bg_mask=True, mask_every_frame=4, bg_upsample=4, obj_mask=False, flow=False, bce_pos_weight=10, ce_pos_weight=1, ce_neg_weight=0.05, ego_loss_weight=0.5, device='cuda', pretrain='', epochs=100, wd=0.07, lr=0.0005, scheduler=True, val_every=10, batch_size=24, num_workers=4, parallel=False, tune_block_idx=[0, 1, 2, -3, -2, -1], resume_from_checkpoint=False, start_epoch=0, model_index=-1, cp='best_model.pth', plot=False, plot_threshold=0, plot_mode='both', val_confusion=False, ego_motion=-1, scale=-1.0, test=False, gt=False, taco_class='both')
+2026-09-27 13:34:23,178 - INFO - initialize train set
+2026-09-27 13:34:48,525 - INFO - initialize val set
+2026-09-27 13:34:57,848 - INFO - Checkpoint path: taco_log/action_slot/num_slots_64_allocated_True_x3d_channel_256_bg_slot_True_bg_mask_True_action_attn_w_1.0_bg_attn_w_0.5_obj_mask_False_epoch_100_lr_0.0005_wd_0.07_bce_pos_weight_10_bg_upsample_4_ego_loss_weight_0.5
+2026-09-27 13:34:57,848 - INFO - Current epoch: 0, lr: [0.0005]
+2026-09-27 13:36:43,477 - INFO - acc of the ego: 0.6589912280701754
+2026-09-27 13:36:43,478 - INFO - total loss: 3.737814822740722
+2026-09-27 13:36:43,478 - INFO - attn loss: 0.10001624578185249
+2026-09-27 13:36:43,478 - INFO - obj_slot loss: 1.0137
+2026-09-27 13:36:43,480 - INFO - action_attn_loss: 0.0066176491765011294
+2026-09-27 13:36:43,480 - INFO - bg_attn_loss_epoch: 0.1867971939214489
+2026-09-27 13:36:43,481 - INFO - --------------------
+2026-09-27 13:36:43,481 - INFO - actor loss: 0.8368466402354994
+2026-09-27 13:36:43,481 - INFO - ego loss: 0.8504146107456141
+2026-09-27 13:36:43,482 - INFO - (train) mAP of the actor: 0.04780341825773778
+2026-09-27 13:38:25,025 - INFO - attn loss: 0.6128135148697255
+2026-09-27 13:38:25,034 - INFO - action_attn_loss: 0.05871576541756982
+2026-09-27 13:38:25,034 - INFO - bg_attn_loss_epoch: 1.1081954971478696
+2026-09-27 13:38:25,034 - INFO - Action IoU 0: 100.00
+2026-09-27 13:38:25,034 - INFO - BG IoU 0: 91.95
+2026-09-27 13:38:25,078 - INFO - (val) mAP: 0.06035150982672433
+2026-09-27 13:38:25,078 - INFO - (val) mAP of the c: 0.07704547144745581
+2026-09-27 13:38:25,078 - INFO - (val) mAP of the b: 0.044916601622801776
+2026-09-27 13:38:25,080 - INFO - (val) mAP of the p: 0.05793741672667069
+2026-09-27 13:38:25,081 - INFO - (val) mAP of the c+: 0.06733923545483826
+2026-09-27 13:38:25,082 - INFO - (val) mAP of the b+: 0.06142130374563671
+2026-09-27 13:38:25,089 - INFO - (val) mAP of the p+: 0.04879074348102515
+2026-09-27 13:38:25,091 - INFO - acc of the ego: 0.7523029682702149
+2026-09-27 13:38:25,101 - INFO - best mAP : 0.06035150982672433
+2026-09-27 13:38:25,536 - INFO - Current epoch: 1, lr: [0.00055]
+2026-09-27 13:39:59,101 - INFO - acc of the ego: 0.8464912280701754
+2026-09-27 13:39:59,101 - INFO - total loss: 3.1832673235943445
+2026-09-27 13:39:59,101 - INFO - attn loss: 0.06675857808767703
+2026-09-27 13:39:59,101 - INFO - obj_slot loss: 0.9954
+2026-09-27 13:39:59,101 - INFO - action_attn_loss: 0.006463321599815237
+2026-09-27 13:39:59,101 - INFO - bg_attn_loss_epoch: 0.12059051288585913
+2026-09-27 13:39:59,101 - INFO - --------------------
+2026-09-27 13:39:59,101 - INFO - actor loss: 0.800555734257949
+2026-09-27 13:39:59,101 - INFO - ego loss: 0.4532020970394737
+2026-09-27 13:39:59,111 - INFO - (train) mAP of the actor: 0.06100037157934404
+2026-09-27 13:39:59,111 - INFO - Current epoch: 2, lr: [0.0006050000000000001]
+2026-09-27 13:41:32,267 - INFO - acc of the ego: 0.9173976608187134
+2026-09-27 13:41:32,267 - INFO - total loss: 3.0271140917351373
+2026-09-27 13:41:32,267 - INFO - attn loss: 0.06494928318026819
+2026-09-27 13:41:32,267 - INFO - obj_slot loss: 1.1089
+2026-09-27 13:41:32,267 - INFO - action_attn_loss: 0.00651917576773517
+2026-09-27 13:41:32,267 - INFO - bg_attn_loss_epoch: 0.11686021455547266
+2026-09-27 13:41:32,269 - INFO - --------------------
+2026-09-27 13:41:32,270 - INFO - actor loss: 0.7444558493923723
+2026-09-27 13:41:32,272 - INFO - ego loss: 0.29936566269188597
+2026-09-27 13:41:32,273 - INFO - (train) mAP of the actor: 0.08807192801313063
+2026-09-27 13:41:32,274 - INFO - Current epoch: 3, lr: [0.0006655000000000002]
+2026-09-27 13:43:06,436 - INFO - acc of the ego: 0.9243421052631579
+2026-09-27 13:43:06,436 - INFO - total loss: 11.38758052179688
+2026-09-27 13:43:06,436 - INFO - attn loss: 0.06502931355907206
+2026-09-27 13:43:06,436 - INFO - obj_slot loss: 9.7134
+2026-09-27 13:43:06,436 - INFO - action_attn_loss: 0.006595131095596834
+2026-09-27 13:43:06,436 - INFO - bg_attn_loss_epoch: 0.11686836516386584
+2026-09-27 13:43:06,436 - INFO - --------------------
+2026-09-27 13:43:06,436 - INFO - actor loss: 0.639473590411638
+2026-09-27 13:43:06,436 - INFO - ego loss: 0.2651838336074561
+2026-09-27 13:43:06,436 - INFO - (train) mAP of the actor: 0.13839095966509335
+2026-09-27 13:43:06,436 - INFO - Current epoch: 4, lr: [0.0007320500000000003]
+2026-09-27 13:44:39,572 - INFO - acc of the ego: 0.9258040935672515
+2026-09-27 13:44:39,573 - INFO - total loss: 12.61519221673932
+2026-09-27 13:44:39,573 - INFO - attn loss: 0.06341352372577316
+2026-09-27 13:44:39,573 - INFO - obj_slot loss: 11.0901
+2026-09-27 13:44:39,573 - INFO - action_attn_loss: 0.0066775555248584665
+2026-09-27 13:44:39,573 - INFO - bg_attn_loss_epoch: 0.11347193623843946
+2026-09-27 13:44:39,573 - INFO - --------------------
+2026-09-27 13:44:39,573 - INFO - actor loss: 0.581251861756308
+2026-09-27 13:44:39,573 - INFO - ego loss: 0.23577559621710525
+2026-09-27 13:44:39,573 - INFO - (train) mAP of the actor: 0.1668730193403702
+2026-09-27 13:44:39,573 - INFO - Current epoch: 5, lr: [0.0008052550000000003]
+2026-09-27 13:46:12,439 - INFO - acc of the ego: 0.9444444444444444
+2026-09-27 13:46:12,441 - INFO - total loss: 12.611488984865055
+2026-09-27 13:46:12,441 - INFO - attn loss: 0.06294355917264495
+2026-09-27 13:46:12,441 - INFO - obj_slot loss: 11.1890
+2026-09-27 13:46:12,441 - INFO - action_attn_loss: 0.0067250083216972515
+2026-09-27 13:46:12,441 - INFO - bg_attn_loss_epoch: 0.11243710137511555
+2026-09-27 13:46:12,441 - INFO - --------------------
+2026-09-27 13:46:12,441 - INFO - actor loss: 0.553035029716659
+2026-09-27 13:46:12,441 - INFO - ego loss: 0.19056567811129385
+2026-09-27 13:46:12,441 - INFO - (train) mAP of the actor: 0.18518476776038334
+2026-09-27 13:46:12,441 - INFO - Current epoch: 6, lr: [0.0008857805000000005]
+2026-09-27 13:47:44,889 - INFO - acc of the ego: 0.9484649122807017
+2026-09-27 13:47:44,890 - INFO - total loss: 12.365201347229773
+2026-09-27 13:47:44,890 - INFO - attn loss: 0.0626045019741644
+2026-09-27 13:47:44,890 - INFO - obj_slot loss: 11.0082
+2026-09-27 13:47:44,898 - INFO - action_attn_loss: 0.006780028138963277
+2026-09-27 13:47:44,899 - INFO - bg_attn_loss_epoch: 0.1116489475233513
+2026-09-27 13:47:44,907 - INFO - --------------------
+2026-09-27 13:47:44,909 - INFO - actor loss: 0.5263116445980573
+2026-09-27 13:47:44,916 - INFO - ego loss: 0.17915638706140352
+2026-09-27 13:47:44,925 - INFO - (train) mAP of the actor: 0.20615640604913127
+2026-09-27 13:47:44,934 - INFO - Current epoch: 7, lr: [0.0009743585500000007]
+2026-09-27 13:49:18,672 - INFO - acc of the ego: 0.9484649122807017
+2026-09-27 13:49:18,673 - INFO - total loss: 12.745048122709257
+2026-09-27 13:49:18,673 - INFO - attn loss: 0.06363605665402454
+2026-09-27 13:49:18,673 - INFO - obj_slot loss: 11.4152
+2026-09-27 13:49:18,673 - INFO - action_attn_loss: 0.006847238980985263
+2026-09-27 13:49:18,673 - INFO - bg_attn_loss_epoch: 0.11357763507648518
+2026-09-27 13:49:18,673 - INFO - --------------------
+2026-09-27 13:49:18,673 - INFO - actor loss: 0.5081329285575632
+2026-09-27 13:49:18,673 - INFO - ego loss: 0.18634889836896928
+2026-09-27 13:49:18,673 - INFO - (train) mAP of the actor: 0.2224405074757295
+2026-09-27 13:49:18,673 - INFO - Current epoch: 8, lr: [0.0010717944050000008]
+2026-09-27 13:50:52,191 - INFO - acc of the ego: 0.9521198830409356
+2026-09-27 13:50:52,198 - INFO - total loss: 12.789456909947228
+2026-09-27 13:50:52,198 - INFO - attn loss: 0.06240673026625525
+2026-09-27 13:50:52,198 - INFO - obj_slot loss: 11.5502
+2026-09-27 13:50:52,198 - INFO - action_attn_loss: 0.006887155045804225
+2026-09-27 13:50:52,198 - INFO - bg_attn_loss_epoch: 0.11103915037554607
+2026-09-27 13:50:52,198 - INFO - --------------------
+2026-09-27 13:50:52,198 - INFO - actor loss: 0.47929357593519645
+2026-09-27 13:50:52,198 - INFO - ego loss: 0.15586023163377194
+2026-09-27 13:50:52,198 - INFO - (train) mAP of the actor: 0.2502338002255583
+2026-09-27 13:50:52,199 - INFO - Current epoch: 9, lr: [0.001178973845500001]
+2026-09-27 13:52:25,939 - INFO - acc of the ego: 0.9484649122807017
+2026-09-27 13:52:25,941 - INFO - total loss: 12.950826893772994
+2026-09-27 13:52:25,941 - INFO - attn loss: 0.0627888411348849
+2026-09-27 13:52:25,941 - INFO - obj_slot loss: 11.7193
+2026-09-27 13:52:25,941 - INFO - action_attn_loss: 0.006893077587480085
+2026-09-27 13:52:25,941 - INFO - bg_attn_loss_epoch: 0.11179152758497941
+2026-09-27 13:52:25,941 - INFO - --------------------
+2026-09-27 13:52:25,941 - INFO - actor loss: 0.4664285805141717
+2026-09-27 13:52:25,941 - INFO - ego loss: 0.17312889768366227
+2026-09-27 13:52:25,941 - INFO - (train) mAP of the actor: 0.2652437956468382
+2026-09-27 13:52:25,941 - INFO - Current epoch: 10, lr: [0.0012968712300500012]
+2026-09-27 13:53:59,708 - INFO - acc of the ego: 0.9539473684210527
+2026-09-27 13:53:59,708 - INFO - total loss: 11.391410971158429
+2026-09-27 13:53:59,708 - INFO - attn loss: 0.0631380376258963
+2026-09-27 13:53:59,708 - INFO - obj_slot loss: 10.2081
+2026-09-27 13:53:59,708 - INFO - action_attn_loss: 0.007013367542082019
+2026-09-27 13:53:59,708 - INFO - bg_attn_loss_epoch: 0.11224933994705216
+2026-09-27 13:53:59,708 - INFO - --------------------
+2026-09-27 13:53:59,708 - INFO - actor loss: 0.4472884627287848
+2026-09-27 13:53:59,708 - INFO - ego loss: 0.16244988692434212
+2026-09-27 13:53:59,708 - INFO - (train) mAP of the actor: 0.2842586460209563
+2026-09-27 13:55:37,281 - INFO - attn loss: 0.5750558274356943
+2026-09-27 13:55:37,281 - INFO - action_attn_loss: 0.06370398686920996
+2026-09-27 13:55:37,281 - INFO - bg_attn_loss_epoch: 1.0227036808797143
+2026-09-27 13:55:37,281 - INFO - Action IoU 0: 100.00
+2026-09-27 13:55:37,281 - INFO - BG IoU 0: 92.98
+2026-09-27 13:55:37,324 - INFO - (val) mAP: 0.29676844381739526
+2026-09-27 13:55:37,324 - INFO - (val) mAP of the c: 0.2648207287441622
+2026-09-27 13:55:37,324 - INFO - (val) mAP of the b: 0.19328461196839966
+2026-09-27 13:55:37,324 - INFO - (val) mAP of the p: 0.3076685405144864
+2026-09-27 13:55:37,324 - INFO - (val) mAP of the c+: 0.3029420702993635
+2026-09-27 13:55:37,324 - INFO - (val) mAP of the b+: 0.3638193539925451
+2026-09-27 13:55:37,324 - INFO - (val) mAP of the p+: 0.37917886251796995
+2026-09-27 13:55:37,324 - INFO - acc of the ego: 0.9109518935516888
+2026-09-27 13:55:37,324 - INFO - best mAP : 0.29676844381739526
+2026-09-27 13:55:37,402 - INFO - Current epoch: 11, lr: [0.00017149999999999997]
+2026-09-27 13:57:09,985 - INFO - acc of the ego: 0.9736842105263158
+2026-09-27 13:57:09,985 - INFO - total loss: 11.123628281449017
+2026-09-27 13:57:09,985 - INFO - attn loss: 0.06068349479321848
+2026-09-27 13:57:09,993 - INFO - obj_slot loss: 10.1417
+2026-09-27 13:57:10,003 - INFO - action_attn_loss: 0.006830019782411686
+2026-09-27 13:57:10,010 - INFO - bg_attn_loss_epoch: 0.10770694983371518
+2026-09-27 13:57:10,011 - INFO - --------------------
+2026-09-27 13:57:10,019 - INFO - actor loss: 0.38269720893157155
+2026-09-27 13:57:10,020 - INFO - ego loss: 0.09521163137335527
+2026-09-27 13:57:10,027 - INFO - (train) mAP of the actor: 0.3600598410466663
+2026-09-27 13:57:10,029 - INFO - Current epoch: 12, lr: [0.00012004999999999998]
+2026-09-27 13:58:43,807 - INFO - acc of the ego: 0.9853801169590644
+2026-09-27 13:58:43,807 - INFO - total loss: 11.013669589109588
+2026-09-27 13:58:43,807 - INFO - attn loss: 0.0595051978894493
+2026-09-27 13:58:43,807 - INFO - obj_slot loss: 10.1436
+2026-09-27 13:58:43,807 - INFO - action_attn_loss: 0.00684265749888462
+2026-09-27 13:58:43,807 - INFO - bg_attn_loss_epoch: 0.10532508084648534
+2026-09-27 13:58:43,807 - INFO - --------------------
+2026-09-27 13:58:43,807 - INFO - actor loss: 0.34741822904662084
+2026-09-27 13:58:43,807 - INFO - ego loss: 0.05625139202987939
+2026-09-27 13:58:43,807 - INFO - (train) mAP of the actor: 0.40339315685106
+2026-09-27 13:58:43,809 - INFO - Current epoch: 13, lr: [0.00012004999999999998]
