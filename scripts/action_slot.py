@@ -423,11 +423,11 @@ class ACTION_SLOT(nn.Module):
 
         x = self.temporal_attn(x)
 
-        object_slots, attn_masks = self.object_attention(x)
-        if attn_masks.shape[1] == object_slots.shape[1] + 1:
-            attn_masks_obj = attn_masks[:, 1:, :]  # [B, obj_slot, thw]
+        object_slots, obj_attns = self.object_attention(x)
+        if obj_attns.shape[1] == object_slots.shape[1] + 1:
+            attn_masks_obj = obj_attns[:, 1:, :]  # [B, obj_slot, thw]
         else:
-            attn_masks_obj = attn_masks
+            attn_masks_obj = obj_attns
 
         # 2. Chiếu ngược về từng patch: [B, thw, obj_slot] x [B, obj_slot, C] -> [B, thw, C]
         slot_per_patch = torch.bmm(attn_masks_obj.transpose(1, 2), object_slots)
@@ -474,10 +474,11 @@ class ACTION_SLOT(nn.Module):
 
 
         x = self.drop(x)
+        attn_dict = {'action_attn': attn_masks, 'obj_attn': obj_attns}
         if self.num_ego_class != 0:
             ego_x = self.drop(ego_x)
             ego_x, x = self.head(x, ego_x)
-            return ego_x, x, attn_masks
+            return ego_x, x, attn_dict
         else:
             x = self.head(x)
-            return x, attn_masks
+            return x, attn_dict
