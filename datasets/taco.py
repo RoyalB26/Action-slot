@@ -13,7 +13,7 @@ import json
 import random
 import torchvision.transforms as transforms
 
-is_main_process = os.environ.get("LOCAL_RANK", "0") == "0"
+
 
 class TACO(Dataset):
 
@@ -21,7 +21,8 @@ class TACO(Dataset):
                 args,
                 split='val',
                 root='/data/carla_dataset/data_collection',
-                Max_N=20):
+                Max_N=20,
+                accelerator= None):
         root = args.root
 
         self.split = split
@@ -58,7 +59,7 @@ class TACO(Dataset):
         total_frame = 0
         total_videos = 0
 
-
+        self.accelerator= accelerator
         n=0
 
         f = open('../datasets/taco_'+split+'_data.json')
@@ -80,15 +81,27 @@ class TACO(Dataset):
         mapping = {item: part for part, items in group_rules.items() for item in items}
         mapping2 = {item: part for part, items in group_rules2.items() for item in items}
 
-        for scenario in tqdm(
+
+        pbar = tqdm(
             scenario_list,
             desc="Processing Scenarios",
             file=sys.stdout,
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,  # Xóa thanh bar khi hoàn thành để giữ cell notebook sạch sẽ
-            disable=not is_main_process
-        ):
+        )
+        if accelerator:
+            pbar= tqdm(
+            scenario_list,
+            desc="Processing Scenarios",
+            file=sys.stdout,
+            disable=not self.accelerator.is_local_main_process,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            leave=False,  # Xóa thanh bar khi hoàn thành để giữ cell notebook sạch sẽ
+        )
+
+        for scenario in pbar:
             if not scenario in label_list:
                 continue
             gt = label_list[scenario]
@@ -223,15 +236,25 @@ class TACO(Dataset):
                         
             
         # for each data
-        for data in tqdm(
+        pbar= tqdm(
             self.videos_list,
             desc="Loading Videos",
             file=sys.stdout,
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,
-            disable=not is_main_process
-        ):
+        )
+        if self.accelerator:
+            tqdm(
+            self.videos_list,
+            desc="Loading Videos",
+            disable=not self.accelerator.is_local_main_process,
+            file=sys.stdout,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            leave=False,
+            )
+        for data in pbar:
             root = data[0][0].split('/')
             root = root[:-3]
             root = '/'+os.path.join(*root)
@@ -280,8 +303,8 @@ class TACO(Dataset):
                 out[frame][obj_id] = box
             return out
             
-        
-        for data,idx in tqdm(
+
+        pbar= tqdm(
             zip(self.videos_list, self.idx),
             total=len(self.videos_list), 
             desc="Indexing Videos",
@@ -289,8 +312,22 @@ class TACO(Dataset):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,
-            disable=not is_main_process
-        ):
+        )
+
+        if self.accelerator:
+            pbar= tqdm(
+            zip(self.videos_list, self.idx),
+            total=len(self.videos_list), 
+            desc="Indexing Videos",
+            disable=not self.accelerator.is_local_main_process,
+            file=sys.stdout,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            leave=False,
+            )
+
+        
+        for data,idx in pbar:
             root = data[0][0].split('/')
             root = root[:-3]
             root = '/'+os.path.join(*root)

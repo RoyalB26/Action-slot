@@ -28,7 +28,6 @@ from get_parser import parser
 from loss import ActionSlotLoss
 from model import generate_model
 from utils import AverageMeter
-is_main_process = os.environ.get("LOCAL_RANK", "0") == "0"
 
 def plot_result(result, args):
     """
@@ -259,7 +258,6 @@ class Engine(object):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,  # Xóa bar sau khi xong epoch để không tràn output
-            disable=not is_main_process
         )
 
         for data in pbar:
@@ -291,7 +289,6 @@ class Engine(object):
                 dynamic_ncols=True,
                 mininterval=0.5,
                 leave=False,
-                disable=not is_main_process
             )
             for data in pbar:
                 self.step(data, "val")
@@ -443,9 +440,9 @@ if __name__ == "__main__":
     num_actor_class = 64
 
     accelerator.print("initialize train set")
-    train_set = TACO(args=args, split="train")
+    train_set = TACO(args=args, split="train", accelerator= accelerator)
     accelerator.print("initialize val set")
-    val_set = TACO(args=args, split="val")
+    val_set = TACO(args=args, split="val", accelerator= accelerator)
 
     dataloader_train = DataLoader(
         train_set,
