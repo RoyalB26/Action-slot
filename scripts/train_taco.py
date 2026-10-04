@@ -28,7 +28,7 @@ from get_parser import parser
 from loss import ActionSlotLoss
 from model import generate_model
 from utils import AverageMeter
-
+is_main_process = os.environ.get("LOCAL_RANK", "0") == "0"
 
 def plot_result(result, args):
     """
@@ -259,6 +259,7 @@ class Engine(object):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,  # Xóa bar sau khi xong epoch để không tràn output
+            disable=not is_main_process
         )
 
         for data in pbar:
@@ -290,6 +291,7 @@ class Engine(object):
                 dynamic_ncols=True,
                 mininterval=0.5,
                 leave=False,
+                disable=not is_main_process
             )
             for data in pbar:
                 self.step(data, "val")

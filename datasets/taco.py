@@ -13,6 +13,8 @@ import json
 import random
 import torchvision.transforms as transforms
 
+is_main_process = os.environ.get("LOCAL_RANK", "0") == "0"
+
 class TACO(Dataset):
 
     def __init__(self, 
@@ -85,6 +87,7 @@ class TACO(Dataset):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,  # Xóa thanh bar khi hoàn thành để giữ cell notebook sạch sẽ
+            disable=not is_main_process
         ):
             if not scenario in label_list:
                 continue
@@ -227,6 +230,7 @@ class TACO(Dataset):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,
+            disable=not is_main_process
         ):
             root = data[0][0].split('/')
             root = root[:-3]
@@ -285,6 +289,7 @@ class TACO(Dataset):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,
+            disable=not is_main_process
         ):
             root = data[0][0].split('/')
             root = root[:-3]
