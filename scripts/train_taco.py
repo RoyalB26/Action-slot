@@ -279,9 +279,6 @@ class Engine(object):
         map_pred_actor_list = np.stack(self.map_pred_actor_list, axis=0)
         label_actor_list = np.stack(self.label_actor_list, axis=0)
 
-        map_pred_actor_list = map_pred_actor_list.reshape((map_pred_actor_list.shape[0]*args.batch_size, num_actor_class))
-        label_actor_list = label_actor_list.reshape((label_actor_list.shape[0]*args.batch_size, num_actor_class))
-
         mAP = average_precision_score(
             label_actor_list,
             map_pred_actor_list.astype(np.float32))
