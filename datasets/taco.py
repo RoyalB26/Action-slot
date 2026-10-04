@@ -68,9 +68,9 @@ class TACO(Dataset):
         label_list = json.load(f_label)
         group_rules = {
             "2part": ["ap_Town10HD"],
-            "part3": ["ap_Town03"],#, "ap_Town04", "ap_Town6", "ap_Town07"],
-            "part2": ["ap_Town01"]#, "ap_Town05", "interactive"],
-            # "part1": ["ap_Town02", "non-interactive", "runner_Town03", "runner_Town05", "runner_Town10HD"]
+            "part3": ["ap_Town03", "ap_Town04", "ap_Town6", "ap_Town07"],
+            "part2": ["ap_Town01", "ap_Town05", "interactive"],
+            "part1": ["ap_Town02", "non-interactive", "runner_Town03", "runner_Town05", "runner_Town10HD"]
         }
 
         group_rules2 = {
@@ -96,7 +96,6 @@ class TACO(Dataset):
         )
 
         log_interval = max(1, len(scenario_list) // 10)
-        print(f"WANDB: {self.args.wandb} - BEGIN - disable_pbar: {disable_pbar}")
         for step_idx, scenario in enumerate(pbar if not disable_pbar else scenario_list):
             if not scenario in label_list:
                 continue

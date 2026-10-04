@@ -28,7 +28,9 @@ from get_parser import parser
 from loss import ActionSlotLoss
 from model import generate_model
 from utils import AverageMeter
+import warnings
 
+warnings.filterwarnings("ignore")
 def plot_result(result, args):
     """
     result : mAP, loss
@@ -276,15 +278,21 @@ class Engine(object):
                         "epoch": self.cur_epoch,
                     }
                 )
-        map_pred_actor_list = np.stack(self.map_pred_actor_list, axis=0)
-        label_actor_list = np.stack(self.label_actor_list, axis=0)
 
-        mAP = average_precision_score(
-            label_actor_list,
-            map_pred_actor_list.astype(np.float32))
+        map_pred_actor_list = np.concatenate(self.map_pred_actor_list, axis=0)
+        label_actor_list = np.concatenate(self.label_actor_list, axis=0)
 
+        try:
+            ap_per_class = average_precision_score(
+                label_actor_list,
+                map_pred_actor_list.astype(np.float32),
+                average=None
+            )
+            valid_ap = ap_per_class[~np.isnan(ap_per_class)]
+            mAP = float(np.mean(valid_ap)) if len(valid_ap) > 0 else 0.0
+        except Exception:
+            mAP = 0.0
 
-        
         loss_epoch = self.loss_epoch / self.num_batches
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
         grpo_loss_epoch = self.grpo_loss_epoch / self.num_batches
@@ -306,10 +314,9 @@ class Engine(object):
         self.accelerator.print(
             f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
         )
-        self.accelerator.print(f'(train) mAP of the actor: {mAP}')
+        self.accelerator.print(f"(train) mAP of the actor: {mAP:.4f}")
         self.train_loss.append(loss_epoch)
         self.cur_epoch += 1
-
 
 
 
