@@ -103,7 +103,7 @@ class TACO(Dataset):
             gt = label_list[scenario]
                     
             if self.args.wandb and step_idx % log_interval == 0:
-                progress_pct = (step_idx + 1) / self.num_batches * 100
+                progress_pct = (step_idx + 1) / len(scenario_list) * 100
                 self.accelerator.log(
                     {
                         "batch_progress_pct": progress_pct,
@@ -256,7 +256,7 @@ class TACO(Dataset):
                     
         for step_idx, data in enumerate(pbar if not disable_pbar else self.videos_list):
             if self.args.wandb and step_idx % log_interval == 0:
-                progress_pct = (step_idx + 1) / self.num_batches * 100
+                progress_pct = (step_idx + 1) / len(self.videos_list) * 100
                 self.accelerator.log(
                     {
                         "batch_progress_pct": progress_pct,
@@ -332,7 +332,7 @@ class TACO(Dataset):
         
         for step_idx, (data,idx) in enumerate(pbar if not disable_pbar else zip(self.videos_list, self.idx)):
             if self.args.wandb and step_idx % log_interval == 0:
-                progress_pct = (step_idx + 1) / self.num_batches * 100
+                progress_pct = (step_idx + 1) / len(self.videos_list) * 100
                 self.accelerator.log(
                     {
                         "batch_progress_pct": progress_pct,
