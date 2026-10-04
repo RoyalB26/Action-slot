@@ -108,10 +108,10 @@ class TACO(Dataset):
                 video_folder = video_folder[0]
 
             parent_folder, basic, variant = scenario.split('/')
-            folder_part= mapping[parent_folder]
+            folder_part= mapping.get(parent_folder, "default_value")
             root= "/kaggle/input/datasets/royalb26/taco-dataset-" + folder_part + f"/Bn sao ca {parent_folder}"
             if folder_part == '2part':
-                root= "/kaggle/input/datasets/royalb26/taco-dataset-" + mapping[basic]
+                root= "/kaggle/input/datasets/royalb26/taco-dataset-" + mapping.get(basic, "null")
             
             scenario_path = os.path.join(root,parent_folder,basic,'variant_scenario',variant)
             video_folder_path = os.path.join(scenario_path,'rgb',video_folder)
