@@ -263,8 +263,19 @@ class Engine(object):
             leave=False,
         )
 
-        for step_idx, data in enumerate(pbar):
+        log_interval = max(1, self.num_batches // 10)
+
+        for step_idx, data in enumerate(pbar if not disable_pbar else dataloader_train):
             self.step(data, "train")
+            if self.args.wandb and step_idx % log_interval == 0:
+                progress_pct = (step_idx + 1) / self.num_batches * 100
+                self.accelerator.log(
+                    {
+                        "train/batch_progress_pct": progress_pct,
+                        "train/current_batch": step_idx + 1,
+                        "epoch": self.cur_epoch,
+                    }
+                )
 
         loss_epoch = self.loss_epoch / self.num_batches
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
@@ -296,7 +307,7 @@ class Engine(object):
         save_cp = False
 
         disable_pbar = self.args.wandb or (not self.accelerator.is_local_main_process)
-
+        log_interval = max(1, self.num_batches // 10)
         with torch.no_grad():
             pbar = tqdm(
                 dataloader,
@@ -307,8 +318,17 @@ class Engine(object):
                 mininterval=0.5,
                 leave=False,
             )
-            for data in pbar:
+            for step_idx, data in enumerate(pbar if not disable_pbar else dataloader_train):
                 self.step(data, "val")
+                if self.args.wandb and step_idx % log_interval == 0:
+                    progress_pct = (step_idx + 1) / self.num_batches * 100
+                    self.accelerator.log(
+                        {
+                            "val/batch_progress_pct": progress_pct,
+                            "val/current_batch": step_idx + 1,
+                            "epoch": self.cur_epoch,
+                        }
+                    )
 
             total_loss = self.loss_epoch / float(self.num_batches)
 
