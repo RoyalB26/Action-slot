@@ -81,6 +81,9 @@ class TACO(Dataset):
         mapping = {item: part for part, items in group_rules.items() for item in items}
         mapping2 = {item: part for part, items in group_rules2.items() for item in items}
 
+        disable_pbar = getattr(self.args, "wandb", False) or (
+            self.accelerator is not None and not self.accelerator.is_local_main_process
+        )
 
         pbar = tqdm(
             scenario_list,
@@ -89,16 +92,7 @@ class TACO(Dataset):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,  # Xóa thanh bar khi hoàn thành để giữ cell notebook sạch sẽ
-        )
-        if accelerator:
-            pbar= tqdm(
-            scenario_list,
-            desc="Processing Scenarios",
-            file=sys.stdout,
-            disable=not self.accelerator.is_local_main_process,
-            dynamic_ncols=True,
-            mininterval=0.5,
-            leave=False,  # Xóa thanh bar khi hoàn thành để giữ cell notebook sạch sẽ
+            disable= disable_pbar
         )
 
         for scenario in pbar:
@@ -234,7 +228,10 @@ class TACO(Dataset):
             # with open(os.path.join(root,'tracks','%s.json' % (index)), 'w') as f:
             #     json.dump(out, f)
                         
-            
+        disable_pbar = getattr(self.args, "wandb", False) or (
+            self.accelerator is not None and not self.accelerator.is_local_main_process
+        )
+
         # for each data
         pbar= tqdm(
             self.videos_list,
@@ -243,17 +240,9 @@ class TACO(Dataset):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,
+            disable= disable_pbar
         )
-        if self.accelerator:
-            tqdm(
-            self.videos_list,
-            desc="Loading Videos",
-            disable=not self.accelerator.is_local_main_process,
-            file=sys.stdout,
-            dynamic_ncols=True,
-            mininterval=0.5,
-            leave=False,
-            )
+
         for data in pbar:
             root = data[0][0].split('/')
             root = root[:-3]
@@ -303,6 +292,9 @@ class TACO(Dataset):
                 out[frame][obj_id] = box
             return out
             
+        disable_pbar = getattr(self.args, "wandb", False) or (
+            self.accelerator is not None and not self.accelerator.is_local_main_process
+        )
 
         pbar= tqdm(
             zip(self.videos_list, self.idx),
@@ -312,19 +304,8 @@ class TACO(Dataset):
             dynamic_ncols=True,
             mininterval=0.5,
             leave=False,
+            disable= disable_pbar
         )
-
-        if self.accelerator:
-            pbar= tqdm(
-            zip(self.videos_list, self.idx),
-            total=len(self.videos_list), 
-            desc="Indexing Videos",
-            disable=not self.accelerator.is_local_main_process,
-            file=sys.stdout,
-            dynamic_ncols=True,
-            mininterval=0.5,
-            leave=False,
-            )
 
         
         for data,idx in pbar:

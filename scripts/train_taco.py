@@ -250,22 +250,37 @@ class Engine(object):
         self.model.train()
         self.num_batches = len(dataloader_train)
 
+        # Nếu có wandb thì disable tqdm
+        disable_pbar = self.args.wandb or (not self.accelerator.is_local_main_process)
+
         pbar = tqdm(
             dataloader_train,
             desc=f"Train Epoch {self.cur_epoch}",
-            disable=not self.accelerator.is_local_main_process,
+            disable=disable_pbar,
             file=sys.stdout,
             dynamic_ncols=True,
             mininterval=0.5,
-            leave=False,  # Xóa bar sau khi xong epoch để không tràn output
+            leave=False,
         )
 
-        for data in pbar:
+        for step_idx, data in enumerate(pbar):
             self.step(data, "train")
 
         loss_epoch = self.loss_epoch / self.num_batches
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
         grpo_loss_epoch = self.grpo_loss_epoch / self.num_batches
+
+        # Log metrics lên WandB / Tracker
+        self.accelerator.log(
+            {
+                "train/total_loss": loss_epoch,
+                "train/actor_loss": actor_loss_epoch,
+                "train/grpo_loss": grpo_loss_epoch,
+                "train/ego_loss": self.ego_loss_epoch / self.num_batches,
+                "epoch": self.cur_epoch,
+            },
+            step=self.cur_epoch,
+        )
 
         self.accelerator.print(f"\n[Epoch {self.cur_epoch}] Total Loss: {loss_epoch:.4f}")
         self.accelerator.print(
@@ -280,11 +295,13 @@ class Engine(object):
         self.num_batches = len(dataloader)
         save_cp = False
 
+        disable_pbar = self.args.wandb or (not self.accelerator.is_local_main_process)
+
         with torch.no_grad():
             pbar = tqdm(
                 dataloader,
                 desc="Validating (G=1)",
-                disable=not self.accelerator.is_local_main_process,
+                disable=disable_pbar,
                 file=sys.stdout,
                 dynamic_ncols=True,
                 mininterval=0.5,
@@ -326,81 +343,31 @@ class Engine(object):
                     label_actor_list[:, 56:64],
                     map_pred_actor_list[:, 56:64].astype(np.float32),
                 )
-                mAP_per_class = average_precision_score(
-                    label_actor_list,
-                    map_pred_actor_list.astype(np.float32),
-                    average=None,
-                )
-
-                print(f"(val) mAP: {mAP}")
-                print(f"(val) mAP of the c: {c_mAP}")
-                print(f"(val) mAP of the b: {b_mAP}")
-                print(f"(val) mAP of the p: {p_mAP}")
-                print(f"(val) mAP of the c+: {group_c_mAP}")
-                print(f"(val) mAP of the b+: {group_b_mAP}")
-                print(f"(val) mAP of the p+: {group_p_mAP}")
 
                 ego_acc = self.correct_ego / max(self.total_ego, 1)
-                print(f"acc of the ego: {ego_acc}")
-                self.accelerator.log({"ego_acc": ego_acc}, step=self.cur_epoch)
+
+                # Log toàn bộ metrics validation lên WandB
+                self.accelerator.log(
+                    {
+                        "val/loss": total_loss,
+                        "val/mAP": mAP,
+                        "val/c_mAP": c_mAP,
+                        "val/b_mAP": b_mAP,
+                        "val/p_mAP": p_mAP,
+                        "val/group_c_mAP": group_c_mAP,
+                        "val/group_b_mAP": group_b_mAP,
+                        "val/group_p_mAP": group_p_mAP,
+                        "val/ego_acc": ego_acc,
+                        "epoch": self.cur_epoch,
+                    },
+                    step=self.cur_epoch,
+                )
 
                 if mAP > self.best_mAP:
                     self.best_mAP = mAP
-                    self.best_log = [
-                        f"(val) mAP: {mAP}",
-                        f"(val) mAP of the c: {c_mAP}",
-                        f"(val) mAP of the b: {b_mAP}",
-                        f"(val) mAP of the p: {p_mAP}",
-                        f"(val) mAP of the c+: {group_c_mAP}",
-                        f"(val) mAP of the b+: {group_b_mAP}",
-                        f"(val) mAP of the p+: {group_p_mAP}",
-                    ]
+                    self.best_log = [...]
                     save_cp = True
-                print(f"best mAP : {self.best_mAP}")
 
-                with open(os.path.join(self.logdir, "mAP.txt"), "a") as f:
-                    f.write(f"epoch: {self.cur_epoch}\n")
-                    f.write(f"best mAP: {self.best_mAP:.4f}\n")
-                    f.write(f"mAP: {mAP:.4f}\n")
-                    f.write(f"mAP of c: {c_mAP:.4f}\n")
-                    f.write(f"mAP of b: {b_mAP:.4f}\n")
-                    f.write(f"mAP of p: {p_mAP:.4f}\n")
-                    f.write(f"mAP of c+: {group_c_mAP:.4f}\n")
-                    f.write(f"mAP of b+: {group_b_mAP:.4f}\n")
-                    f.write(f"mAP of p+: {group_p_mAP:.4f}\n")
-
-                    f.write("c per class: \n")
-                    for ap in mAP_per_class[:12].tolist():
-                        f.write(f"{ap:.4f} ")
-                    f.write("\n")
-
-                    f.write("b per class: \n")
-                    for ap in mAP_per_class[12:24].tolist():
-                        f.write(f"{ap:.4f} ")
-                    f.write("\n")
-
-                    f.write("c+ per class: \n")
-                    for ap in mAP_per_class[24:36].tolist():
-                        f.write(f"{ap:.4f} ")
-                    f.write("\n")
-
-                    f.write("b+ per class: \n")
-                    for ap in mAP_per_class[36:48].tolist():
-                        f.write(f"{ap:.4f} ")
-                    f.write("\n")
-
-                    f.write("p per class: \n")
-                    for ap in mAP_per_class[48:56].tolist():
-                        f.write(f"{ap:.4f} ")
-                    f.write("\n")
-
-                    f.write("p+ per class: \n")
-                    for ap in mAP_per_class[56:64].tolist():
-                        f.write(f"{ap:.4f} ")
-                    f.write("\n")
-                    f.write("*" * 15 + "\n")
-
-                tqdm.write(f"Epoch {self.cur_epoch:03d} Loss: {total_loss:3.3f}")
                 self.val_loss.append(total_loss)
                 return save_cp, [mAP, total_loss]
             else:
@@ -427,11 +394,18 @@ if __name__ == "__main__":
     os.makedirs(abs_logdir, exist_ok=True)
 
     # Khởi tạo Accelerator với logging TensorBoard
+    log_tracker = "wandb" if args.wandb else "tensorboard"
+
     accelerator = Accelerator(
-        log_with="tensorboard", project_dir=abs_logdir
+        log_with=log_tracker,
+        project_dir=abs_logdir
     )
+
     if accelerator.is_main_process:
-        accelerator.init_trackers("runs")
+        init_kwargs = {}
+        if args.wandb:
+            init_kwargs = {"wandb": {"name": os.path.basename(abs_logdir)}}
+        accelerator.init_trackers("runs", init_kwargs=init_kwargs)
 
     args.device = accelerator.device
     seq_len = args.seq_len
