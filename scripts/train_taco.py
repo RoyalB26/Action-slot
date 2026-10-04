@@ -1,116 +1,111 @@
-import sys
-sys.path.append('../')
-
 import argparse
 import json
-import os
-from tqdm import tqdm
-from PIL import Image
-import numpy as np
-from get_parser import get_parser
 import math
-import matplotlib.pyplot as plt
-# matplotlib.use('TkAgg')
+import os
+import sys
 
-from sklearn.metrics import average_precision_score
+sys.path.append("../")
+
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
 from scipy.optimize import linear_sum_assignment
+from sklearn.metrics import average_precision_score
+from tqdm import tqdm
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import torch.nn.functional as F
-import torch.nn as nn
 from torchvision import models
 
 torch.backends.cudnn.benchmark = True
 torch.cuda.empty_cache()
 
 from datasets.taco import TACO
-from model import generate_model
+from get_parser import parser
 from loss import ActionSlotLoss
+from model import generate_model
 from utils import AverageMeter
-from accelerate import Accelerator
-from accelerate import DistributedDataParallelKwargs
-import logging
-import warnings
 
-warnings.filterwarnings("ignore")
 
-def plot_result(result,args):
+def plot_result(result, args):
     """
-        result : mAP, loss,
+    result : mAP, loss
     """
-    # text = ["mAP", "loss"]
     text = ["mAP", "loss"]
-    x = [i+1 for i in range(0,args.epochs,args.val_every)]
-    x = x if x[-1] == args.epochs else x+[args.epochs]
-    fig, ax = plt.subplots(2,1,figsize=(10,6))
-    
+    x = [i + 1 for i in range(0, args.epochs, args.val_every)]
+    x = x if x[-1] == args.epochs else x + [args.epochs]
+    fig, ax = plt.subplots(2, 1, figsize=(10, 6))
+
     for i in range(2):
-        ax[i].plot(x,result[:,i])
+        ax[i].plot(x, result[:, i])
         ax[i].title.set_text(text[i])
-    plt.show()	
+    plt.show()
+
 
 def lambda_lr(epoch):
-    if epoch<11:
-        lr = math.pow(1.1,epoch)
+    if epoch < 11:
+        lr = math.pow(1.1, epoch)
     else:
-        lr = math.pow(0.7,int(epoch/3))
+        lr = math.pow(0.7, int(epoch / 3))
     return lr
 
+
 def set_lr(model):
-    params = list(filter(lambda kv: kv[0].startswith("head"), model.named_parameters()))
-    base_params = list(filter(lambda kv: not kv[0].startswith("head") , model.named_parameters()))
+    params = list(
+        filter(lambda kv: kv[0].startswith("head"), model.named_parameters())
+    )
+    base_params = list(
+        filter(
+            lambda kv: not kv[0].startswith("head"), model.named_parameters()
+        )
+    )
     return [
-        {'params': [temp[1] for temp in base_params]},
-        {'params': [temp[1] for temp in params], 'lr': 2e-2}
+        {"params": [temp[1] for temp in base_params]},
+        {"params": [temp[1] for temp in params], "lr": 2e-2},
     ]
 
-class Engine(object):
-    """Engine that runs training and inference.
-    Args
-        - cur_epoch (int): Current epoch.
-        - print_every (int): How frequently (# batches) to print loss.
-        - validate_every (int): How frequently (# epochs) to run validation.
-        
-    """
 
-    def __init__(self, args, model, optimizer, num_actor_class, accelerator, scheduler=None):
+class Engine(object):
+
+    def __init__(
+        self, args, model, optimizer, num_actor_class, scheduler=None
+    ):
         self.args = args
-  
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.accelerator = accelerator
-        raw_model = self.accelerator.unwrap_model(self.model) if hasattr(self, 'accelerator') and self.accelerator is not None else self.model
+        self.num_actor_class = num_actor_class
+        self.num_groups = getattr(args, "num_groups", 4)  # G nhóm S cho GRPO
 
-        if hasattr(raw_model, 'resolution'):
-            attention_res = (raw_model.resolution[0] * args.bg_upsample, raw_model.resolution[1] * args.bg_upsample)
-        elif hasattr(self.model, 'module') and hasattr(self.model.module, 'resolution'):
-            attention_res = (self.model.module.resolution[0] * args.bg_upsample, self.model.module.resolution[1] * args.bg_upsample)
-        elif hasattr(self.model, 'resolution'):
-            attention_res = (self.model.resolution[0] * args.bg_upsample, self.model.resolution[1] * args.bg_upsample)
-        else:
-            attention_res = (16 * args.bg_upsample, 16 * args.bg_upsample)
+        attention_res = (
+            (
+                self.model.resolution[0] * args.bg_upsample,
+                self.model.resolution[1] * args.bg_upsample,
+            )
+            if hasattr(self.model, "resolution")
+            else None
+        )
+        self.criterion = ActionSlotLoss(
+            args, num_actor_class, attention_res
+        ).to(self.args.device)
 
-        self.criterion = ActionSlotLoss(args, num_actor_class, attention_res).to(self.args.device)
-
-        self.cur_epoch = args.start_epoch
+        self.cur_epoch = 0
         self.train_loss = []
         self.val_loss = []
-        self.bestval = 1e10
         self.best_mAP = 1e-5
+        self.best_log = []
         self.reset_log()
-        
+
     def reset_log(self):
-        self.loss_epoch = 0.
-        self.ego_loss_epoch = 0.
-        self.seg_loss_epoch = 0.
-        self.attn_loss_epoch= 0.
-        self.action_attn_loss_epoch = 0.
-        self.bg_attn_loss_epoch = 0.
-        self.actor_loss_epoch = 0.
+        self.loss_epoch = 0.0
+        self.ego_loss_epoch = 0.0
+        self.actor_loss_epoch = 0.0
+        self.grpo_loss_epoch = 0.0
+        self.attn_loss_epoch = 0.0
         self.correct_ego = 0
         self.total_ego = 0
         self.label_actor_list = []
@@ -120,522 +115,270 @@ class Engine(object):
         self.bg_inter = AverageMeter()
         self.bg_union = AverageMeter()
 
-    def step(self,batch,mode):
-
+    def step(self, batch, mode):
         for k in batch:
-            if isinstance(batch[k],torch.Tensor):
+            if isinstance(batch[k], torch.Tensor):
                 batch[k] = batch[k].to(self.args.device)
-        
-        video_in = batch['videos']
-        if self.args.box:
-            box_in = batch['box']
-            if isinstance(box_in,np.ndarray):
-                boxes = torch.from_numpy(box_in).to(self.args.device, dtype=torch.float32)
-            else:
-                boxes = box_in.to(self.args.device, dtype=torch.float32)
-        inputs = []
-        for i in range(seq_len):
-            inputs.append(video_in[i].to(self.args.device, dtype=torch.float32))
 
-        # --------------------------------------------
-        attn = None
-        # object-based models
-        if self.args.box:
-            pred_ego, pred_actor = self.model(inputs, boxes)
+        video_in = batch["videos"]
+        seq_len = self.args.seq_len
+        inputs = [
+            video_in[i].to(self.args.device, dtype=torch.float32)
+            for i in range(seq_len)
+        ]
 
-        else:
-            if 'slot' in self.args.model_name or 'mvit' in self.args.model_name:
-                pred_ego, pred_actor, attn = self.model(inputs)
-            else:
-                pred_ego, pred_actor = self.model(inputs)
-        loss_dict = self.criterion({'ego':pred_ego,'actor':pred_actor,'attn':attn},batch, False if mode == 'train' else True)
-        if self.args.parallel:
-            for _, v in loss_dict.items():
-                if isinstance(v,torch.Tensor):
-                    v = v.mean()
+        # =========================================================================
+        # HUẤN LUYỆN (TRAIN MODE) VỚI GRPO (G NHÓM TRAJECTORY)
+        # =========================================================================
+        if mode == "train":
+            # 1. Rollout Policy cũ (pi_old) để lấy mẫu G nhóm S
+            with torch.no_grad():
+                pred_ego_old, pred_actor_old, _, old_log_prob = self.model(
+                    inputs, num_groups=self.num_groups
+                )
 
-        ego_loss = loss_dict['ego']
-        if ego_loss is None:
-            ego_loss = torch.Tensor([0.0])
-        actor_loss = loss_dict['actor']
-        action_attn_loss, bg_attn_loss = loss_dict['attn']['attn_loss'], loss_dict['attn']['bg_attn_loss']
+            # 2. Forward Policy hiện tại (pi_theta)
+            pred_ego, pred_actor, attn, log_prob = self.model(
+                inputs, num_groups=self.num_groups
+            )
 
-        if self.criterion.attn_loss_type == 1:
-            attn_loss = action_attn_loss
+            # 3. Tính toán Loss (Supervised + GRPO)
+            pred_dict = {
+                "ego": pred_ego,
+                "actor": pred_actor,
+                "attn": attn,
+                "log_prob": log_prob,
+                "old_log_prob": old_log_prob,
+            }
+            loss_dict = self.criterion(pred_dict, batch, validate=False)
 
-        elif self.criterion.attn_loss_type == 2:
-            attn_loss = action_attn_loss * self.args.action_attn_weight
+            ego_loss = (
+                loss_dict["ego"]
+                if loss_dict["ego"] is not None
+                else torch.tensor(0.0).cuda()
+            )
+            actor_loss = loss_dict["actor"]
+            grpo_loss = loss_dict["grpo"]
+            attn_loss = loss_dict["attn"]["attn_loss"]
 
-            self.attn_loss_epoch += float(attn_loss.item())
-            self.action_attn_loss_epoch += float(action_attn_loss.item())
+            # Tổng hợp Loss
+            total_loss = (
+                actor_loss
+                + self.args.ego_loss_weight * ego_loss
+                + grpo_loss
+                + attn_loss
+            )
 
-        elif self.criterion.attn_loss_type == 3:
-            attn_loss = self.args.action_attn_weight * action_attn_loss + self.args.bg_attn_weight * bg_attn_loss
-
-            self.attn_loss_epoch += float(attn_loss.item())
-            self.action_attn_loss_epoch += float(action_attn_loss.item())
-            self.bg_attn_loss_epoch += float(bg_attn_loss.item())
-            
-        elif self.criterion.attn_loss_type == 4:
-            attn_loss = self.args.bg_attn_weight * bg_attn_loss
-
-            self.attn_loss_epoch += float(attn_loss.item())
-            self.bg_attn_loss_epoch += float(bg_attn_loss.item())
-
-        if 'slot' in self.args.model_name and (self.args.action_attn_weight>0. or  self.args.bg_attn_weight>0. or self.args.obj_mask):
-            loss = actor_loss + self.args.ego_loss_weight*ego_loss + attn_loss
-        else:
-            loss = actor_loss + self.args.ego_loss_weight*ego_loss
-        self.loss_epoch += float(loss.item())
-
-        _, pred_ego = torch.max(pred_ego.data, 1)
-        ego, actor = batch['ego'] ,batch['actor']
-        self.total_ego += ego.size(0)
-        self.correct_ego += (pred_ego == ego).sum().item()
-
-        if ('slot' in args.model_name and not args.allocated_slot) or args.box:
-            pred_actor = torch.nn.functional.softmax(pred_actor, dim=-1)
-            _, pred_actor_idx = torch.max(pred_actor.data, -1)
-            pred_actor_idx = pred_actor_idx.detach().cpu().numpy().astype(int)
-            map_batch_new_pred_actor = []
-            for i, b in enumerate(pred_actor_idx):
-                map_new_pred = np.zeros(num_actor_class, dtype=np.float32)+1e-5
-                for j, pred in enumerate(b):
-                    if pred != num_actor_class:
-                        if pred_actor[i, j, pred] > map_new_pred[pred]:
-                            map_new_pred[pred] = pred_actor[i, j, pred]
-                map_batch_new_pred_actor.append(map_new_pred)
-            map_batch_new_pred_actor = np.array(map_batch_new_pred_actor)
-            self.map_pred_actor_list.append(map_batch_new_pred_actor)
-            self.label_actor_list.append(batch['slot_eval_gt'].cpu().numpy())
-        else:
-            pred_actor = torch.sigmoid(pred_actor)
-            self.map_pred_actor_list.append(pred_actor.detach().cpu().numpy())
-            self.label_actor_list.append(actor.detach().cpu().numpy())
-        
-        actor_loss, ego_loss = actor_loss.mean(), ego_loss.mean()
-        self.actor_loss_epoch += float(actor_loss.item())
-        self.ego_loss_epoch += float(ego_loss.item())
-        
-        if mode == 'train':
             self.optimizer.zero_grad()
-            self.accelerator.backward(loss)
+            total_loss.backward()
             self.optimizer.step()
-            # if self.scheduler is not None:
-            #     self.scheduler.step()
-        else:
-            if loss_dict['attn']['action_inter'] is not None:
-                self.action_inter.update(loss_dict['attn']['action_inter'])
-                self.action_union.update(loss_dict['attn']['action_union'])
-            if loss_dict['attn']['bg_inter'] is not None:
-                self.bg_inter.update(loss_dict['attn']['bg_inter'])
-                self.bg_union.update(loss_dict['attn']['bg_union'])
+            if self.scheduler is not None:
+                self.scheduler.step()
 
-    def _parallel(self):
-        self.model = nn.DataParallel(self.model)
-        self.criterion = nn.DataParallel(self.criterion)
+            # Metrics logging
+            self.loss_epoch += float(total_loss.item())
+            self.actor_loss_epoch += float(actor_loss.item())
+            self.grpo_loss_epoch += float(grpo_loss.item())
+            self.ego_loss_epoch += float(ego_loss.item())
+
+            # Lấy trung bình dự đoán qua G nhóm để đo độ chính xác lúc train
+            pred_actor_mean = torch.sigmoid(pred_actor.mean(dim=1))
+            self.map_pred_actor_list.append(
+                pred_actor_mean.detach().cpu().numpy()
+            )
+            self.label_actor_list.append(batch["actor"].detach().cpu().numpy())
+
+            if pred_ego is not None:
+                _, pred_ego_idx = torch.max(pred_ego.data, 1)
+                self.correct_ego += (pred_ego_idx == batch["ego"]).sum().item()
+                self.total_ego += batch["ego"].size(0)
+
+        # =========================================================================
+        # ĐÁNH GIÁ (VAL / TEST MODE) - CHẠY DETERMINISTIC VỚI G = 1 (STREAMING EDGE)
+        # =========================================================================
+        else:
+            with torch.no_grad():
+                # G=1: chỉ giữ 1 chuỗi slot chuyển tiếp giữa các 4-frame chunks
+                pred_ego, pred_actor, attn, _ = self.model(inputs, num_groups=1)
+                # Squeeze chiều G = 1
+                if pred_actor.dim() == 3 and pred_actor.shape[1] == 1:
+                    pred_actor = pred_actor.squeeze(1)
+
+                pred_dict = {
+                    "ego": pred_ego,
+                    "actor": pred_actor,
+                    "attn": attn,
+                    "log_prob": None,
+                    "old_log_prob": None,
+                }
+                loss_dict = self.criterion(pred_dict, batch, validate=True)
+
+                actor_loss = loss_dict["actor"]
+                ego_loss = (
+                    loss_dict["ego"]
+                    if loss_dict["ego"] is not None
+                    else torch.tensor(0.0).cuda()
+                )
+                total_loss = actor_loss + self.args.ego_loss_weight * ego_loss
+                self.loss_epoch += float(total_loss.item())
+
+                pred_actor_sig = torch.sigmoid(pred_actor)
+                self.map_pred_actor_list.append(
+                    pred_actor_sig.detach().cpu().numpy()
+                )
+                self.label_actor_list.append(
+                    batch["actor"].detach().cpu().numpy()
+                )
+
+                if pred_ego is not None:
+                    _, pred_ego_idx = torch.max(pred_ego.data, 1)
+                    self.correct_ego += (
+                        (pred_ego_idx == batch["ego"]).sum().item()
+                    )
+                    self.total_ego += batch["ego"].size(0)
 
     def train(self):
         self.reset_log()
-        model_name = self.args.model_name
-        if scheduler is not None:
-            print(f"Current epoch: {self.cur_epoch}, lr: {scheduler.get_last_lr()}")
-            logging.info(f"Current epoch: {self.cur_epoch}, lr: {scheduler.get_last_lr()}")
-        else:
-            print(f"Current epoch: {self.cur_epoch}")
-            logging.info(f"Current epoch: {self.cur_epoch}")
-        self.model = self.model.train()
-        # Train loop
+        self.model.train()
         self.num_batches = len(dataloader_train)
-        for data in (dataloader_train):
-            self.step(data,'train')
-        if scheduler is not None:
-            scheduler.step()
 
-        map_pred_actor_list = np.stack(self.map_pred_actor_list, axis=0)
-        label_actor_list = np.stack(self.label_actor_list, axis=0)
+        for data in tqdm(
+            dataloader_train, desc=f"Train Epoch {self.cur_epoch}"
+        ):
+            self.step(data, "train")
 
-        map_pred_actor_list = map_pred_actor_list.reshape((map_pred_actor_list.shape[0]*args.batch_size, num_actor_class))
-        label_actor_list = label_actor_list.reshape((label_actor_list.shape[0]*args.batch_size, num_actor_class))
-
-        mAP = average_precision_score(
-            label_actor_list,
-            map_pred_actor_list.astype(np.float32))
-
-        loss_epoch = self.loss_epoch / self.num_batches	
+        loss_epoch = self.loss_epoch / self.num_batches
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
-        ego_loss_epoch = self.ego_loss_epoch / self.num_batches
+        grpo_loss_epoch = self.grpo_loss_epoch / self.num_batches
 
-        ego_acc = self.correct_ego / self.total_ego
-        print(f'acc of the ego: {ego_acc}')
-        logging.info(f'acc of the ego: {ego_acc}')
-
-        print('total loss')
-        print(loss_epoch)
-        logging.info(f'total loss: {loss_epoch}')
-
-        if self.args.action_attn_weight > 0 or self.args.bg_attn_weight > 0:
-            attn_loss_epoch = self.attn_loss_epoch / self.num_batches
-            print('attn loss:')
-            print(attn_loss_epoch)
-            logging.info(f'attn loss: {attn_loss_epoch}')
-
-            if self.args.action_attn_weight > 0:
-                action_attn_loss_epoch = self.action_attn_loss_epoch / self.num_batches
-                print('action_attn_loss')
-                print(action_attn_loss_epoch)
-                logging.info(f'action_attn_loss: {action_attn_loss_epoch}')
-
-            if self.args.bg_attn_weight > 0:
-                bg_attn_loss_epoch = self.bg_attn_loss_epoch / self.num_batches
-                print('bg_attn_loss_epoch')
-                print(bg_attn_loss_epoch)
-                logging.info(f'bg_attn_loss_epoch: {bg_attn_loss_epoch}')
-
-        print('-' * 20)
-        logging.info('-' * 20)
-
-        print('actor loss:')
-        print(actor_loss_epoch)
-        logging.info(f'actor loss: {actor_loss_epoch}')
-
-        print('ego loss:')
-        print(ego_loss_epoch)
-        logging.info(f'ego loss: {ego_loss_epoch}')
-
-        print(f'(train) mAP of the actor: {mAP}')
-        logging.info(f'(train) mAP of the actor: {mAP}')
-
+        print(f"\n[Epoch {self.cur_epoch}] Total Loss: {loss_epoch:.4f}")
+        print(
+            f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
+        )
         self.train_loss.append(loss_epoch)
         self.cur_epoch += 1
-        
 
     def validate(self, dataloader):
-        self.model = self.model.eval()
-        save_cp = False
+        self.model.eval()
         self.reset_log()
-        with torch.no_grad():	
-            for data in (dataloader):
-                self.step(data,'val')
-            
-            if args.action_attn_weight > 0. or args.bg_attn_weight > 0.:
-                attn_loss_epoch = self.attn_loss_epoch / self.num_batches
-                print('attn loss:')
-                print(attn_loss_epoch)
-                logging.info(f'attn loss: {attn_loss_epoch}')
+        self.num_batches = len(dataloader)
+        save_cp = False
 
-                if args.action_attn_weight > 0.:
-                    action_attn_loss_epoch = self.action_attn_loss_epoch / self.num_batches
-                    print('action_attn_loss')
-                    print(action_attn_loss_epoch)
-                    logging.info(f'action_attn_loss: {action_attn_loss_epoch}')
+        with torch.no_grad():
+            for data in tqdm(dataloader, desc="Validating (G=1 Streaming)"):
+                self.step(data, "val")
 
-                if args.bg_attn_weight > 0.:
-                    bg_attn_loss_epoch = self.bg_attn_loss_epoch / self.num_batches
-                    print('bg_attn_loss_epoch')
-                    print(bg_attn_loss_epoch)
-                    logging.info(f'bg_attn_loss_epoch: {bg_attn_loss_epoch}')
+            map_pred_actor_list = np.concatenate(
+                self.map_pred_actor_list, axis=0
+            )
+            label_actor_list = np.concatenate(self.label_actor_list, axis=0)
 
-            if args.action_attn_weight > 0 and args.bg_attn_weight > 0:
-                iou = self.action_inter.sum / (self.action_union.sum + 1e-10)
-                for i, val in enumerate(iou):
-                    msg = 'Action IoU {0}: {1:.2f}'.format(i, val * 100)
-                    print(msg)
-                    logging.info(msg)
+            mAP = average_precision_score(
+                label_actor_list, map_pred_actor_list.astype(np.float32)
+            )
+            c_mAP = average_precision_score(
+                label_actor_list[:, :12],
+                map_pred_actor_list[:, :12].astype(np.float32),
+            )
+            b_mAP = average_precision_score(
+                label_actor_list[:, 24:36],
+                map_pred_actor_list[:, 24:36].astype(np.float32),
+            )
+            p_mAP = average_precision_score(
+                label_actor_list[:, 48:56],
+                map_pred_actor_list[:, 48:56].astype(np.float32),
+            )
+            group_c_mAP = average_precision_score(
+                label_actor_list[:, 12:24],
+                map_pred_actor_list[:, 12:24].astype(np.float32),
+            )
+            group_b_mAP = average_precision_score(
+                label_actor_list[:, 36:48],
+                map_pred_actor_list[:, 36:48].astype(np.float32),
+            )
+            group_p_mAP = average_precision_score(
+                label_actor_list[:, 56:64],
+                map_pred_actor_list[:, 56:64].astype(np.float32),
+            )
+            mAP_per_class = average_precision_score(
+                label_actor_list,
+                map_pred_actor_list.astype(np.float32),
+                average=None,
+            )
 
-                iou = self.bg_inter.sum / (self.bg_union.sum + 1e-10)
-                for i, val in enumerate(iou):
-                    msg = 'BG IoU {0}: {1:.2f}'.format(i, val * 100)
-                    print(msg)
-                    logging.info(msg)
+            print(f"(val) mAP: {mAP}")
+            print(f"(val) mAP of the c: {c_mAP}")
+            print(f"(val) mAP of the b: {b_mAP}")
+            print(f"(val) mAP of the p: {p_mAP}")
+            print(f"(val) mAP of the c+: {group_c_mAP}")
+            print(f"(val) mAP of the b+: {group_b_mAP}")
+            print(f"(val) mAP of the p+: {group_p_mAP}")
 
-            map_pred_actor_list = np.stack(self.map_pred_actor_list, axis=0)
-            label_actor_list = np.stack(self.label_actor_list, axis=0)
-            
-            map_pred_actor_list = map_pred_actor_list.reshape((map_pred_actor_list.shape[0], num_actor_class))
-            label_actor_list = label_actor_list.reshape((label_actor_list.shape[0], num_actor_class))
-            map_pred_actor_list = np.array(map_pred_actor_list)
-            label_actor_list = np.array(label_actor_list)
-            if args.taco_class == 'Action':
-                mAP = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),
-                        )
-                z_mAP = average_precision_score(
-                        label_actor_list[:, 0:12],
-                        map_pred_actor_list[:, 0:12].astype(np.float32)
-                )
+            print(f"acc of the ego: {self.correct_ego/self.total_ego}")
+            writer.add_scalar(
+                "ego", self.correct_ego / self.total_ego, self.cur_epoch
+            )
 
-                c_mAP = average_precision_score(
-                        label_actor_list[:, 12:20],
-                        map_pred_actor_list[:, 12:20].astype(np.float32)
-                )
-                mAP_per_class = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),	
-                        average=None)
+            if mAP > self.best_mAP:
+                self.best_mAP = mAP
+                self.best_log = [
+                    f"(val) mAP: {mAP}",
+                    f"(val) mAP of the c: {c_mAP}",
+                    f"(val) mAP of the b: {b_mAP}",
+                    f"(val) mAP of the p: {p_mAP}",
+                    f"(val) mAP of the c+: {group_c_mAP}",
+                    f"(val) mAP of the b+: {group_b_mAP}",
+                    f"(val) mAP of the p+: {group_p_mAP}",
+                ]
+                save_cp = True
+            print(f"best mAP : {self.best_mAP}")
 
-                print(f'(val) mAP: {mAP}')
-                logging.info(f'(val) mAP: {mAP}')
+            with open(os.path.join(logdir, "mAP.txt"), "a") as f:
+                f.write("epoch: " + str(self.cur_epoch) + "\n")
+                f.write("best mAP: %.4f\n" % self.best_mAP)
+                f.write("mAP: %.4f\n" % mAP)
+                f.write("mAP of c: %.4f\n" % c_mAP)
+                f.write("mAP of b: %.4f\n" % b_mAP)
+                f.write("mAP of p: %.4f\n" % p_mAP)
+                f.write("mAP of c+: %.4f\n" % group_c_mAP)
+                f.write("mAP of b+: %.4f\n" % group_b_mAP)
+                f.write("mAP of p+: %.4f\n" % group_p_mAP)
 
-                print(f'(val) mAP of z actions: {z_mAP}')
-                logging.info(f'(val) mAP of z actions: {z_mAP}')
-
-                print(f'(val) mAP of c actions: {c_mAP}')
-                logging.info(f'(val) mAP of c actions: {c_mAP}')
-
-                print('z per class: \n')
+                f.write("c per class: \n")
                 for ap in mAP_per_class[:12].tolist():
-                    print("%.4f " % ap, end = ' ')
-                z_per_class_str = " ".join(f"{ap:.4f}" for ap in mAP_per_class[:12].tolist())
-                logging.info(f'z per class: {z_per_class_str}')
+                    f.write("%.4f " % ap)
+                f.write("\n")
 
-                print('c per class: \n')
-                for ap in mAP_per_class[12:20].tolist():
-                    print("%.4f " % ap, end =  " ")
-                c_per_class_str = " ".join(f"{ap:.4f}" for ap in mAP_per_class[12:20].tolist())
-                logging.info(f'c per class: {c_per_class_str}')
+                f.write("b per class: \n")
+                for ap in mAP_per_class[12:24].tolist():
+                    f.write("%.4f " % ap)
+                f.write("\n")
 
-                ego_acc = self.correct_ego / self.total_ego
-                print(f'acc of the ego: {ego_acc}')
-                logging.info(f'acc of the ego: {ego_acc}')
+                f.write("c+ per class: \n")
+                for ap in mAP_per_class[24:36].tolist():
+                    f.write("%.4f " % ap)
+                f.write("\n")
 
-                writer.add_scalar('ego', ego_acc, self.cur_epoch)   
+                f.write("b+ per class: \n")
+                for ap in mAP_per_class[36:48].tolist():
+                    f.write("%.4f " % ap)
+                f.write("\n")
 
-                if mAP > self.best_mAP:
-                    self.best_mAP = mAP
-                    self.best_log = [
-                        f'(val) mAP: {mAP}',
-                        f'(val) mAP of z actions: {z_mAP}',
-                        f'(val) mAP of c actions: {c_mAP}',
-                    ]
-                    save_cp = True
-                print(f'best mAP : {self.best_mAP}')
-                logging.info(f'best mAP : {self.best_mAP}')
-                with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
-                    f.write('epoch: ' + str(self.cur_epoch))
-                    f.write('\n')
-                    f.write('best mAP: %.4f' % self.best_mAP)
-                    f.write('\n')
-                    f.write('mAP: %.4f' % mAP)
-                    f.write('\n')
-                    f.write('mAP of z: %.4f' % z_mAP)
-                    f.write('\n')
-                    f.write('mAP of c: %.4f' % c_mAP)
-                    f.write('\n')
+                f.write("p per class: \n")
+                for ap in mAP_per_class[48:56].tolist():
+                    f.write("%.4f " % ap)
+                f.write("\n")
 
-                    f.write('z per class: \n')
-                    for ap in mAP_per_class[:12].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-                    f.write('c per class: \n')
-                    for ap in mAP_per_class[12:20].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-            elif args.taco_class == 'Object':
+                f.write("p+ per class: \n")
+                for ap in mAP_per_class[56:64].tolist():
+                    f.write("%.4f " % ap)
+                f.write("\n")
+                f.write("*" * 15 + "\n")
 
-                mAP = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),
-                        )
-                c_mAP = average_precision_score(
-                        label_actor_list[:, :1],
-                        map_pred_actor_list[:, :1].astype(np.float32)
-                        )
-                b_mAP = average_precision_score(
-                        label_actor_list[:, 2:3],
-                        map_pred_actor_list[:, 2:3].astype(np.float32)
-                        )
-                p_mAP = average_precision_score(
-                        label_actor_list[:, 4:5],
-                        map_pred_actor_list[:, 4:5].astype(np.float32),
-                        )
-                group_c_mAP = average_precision_score(
-                        label_actor_list[:, 1:2],
-                        map_pred_actor_list[:, 1:2].astype(np.float32)
-                        )
-                group_b_mAP = average_precision_score(
-                        label_actor_list[:, 3:4],
-                        map_pred_actor_list[:, 3:4].astype(np.float32)
-                        )
-                group_p_mAP = average_precision_score(
-                        label_actor_list[:, 5:6],
-                        map_pred_actor_list[:, 5:6].astype(np.float32),
-                        )
-                mAP_per_class = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),	
-                        average=None)
-
-                print(f'(val) mAP: {mAP}')
-                logging.info(f'(val) mAP: {mAP}')
-                print(f'(val) mAP of the c: {c_mAP}')
-                logging.info(f'(val) mAP of the c: {c_mAP}')
-                print(f'(val) mAP of the b: {b_mAP}')
-                logging.info(f'(val) mAP of the b: {b_mAP}')
-                print(f'(val) mAP of the p: {p_mAP}')
-                logging.info(f'(val) mAP of the p: {p_mAP}')
-                print(f'(val) mAP of the c+: {group_c_mAP}')
-                logging.info(f'(val) mAP of the c+: {group_c_mAP}')
-                print(f'(val) mAP of the b+: {group_b_mAP}')
-                logging.info(f'(val) mAP of the b+: {group_b_mAP}')
-                print(f'(val) mAP of the p+: {group_p_mAP}')
-                logging.info(f'(val) mAP of the p+: {group_p_mAP}')
-
-                ego_acc = self.correct_ego / self.total_ego
-                print(f'acc of the ego: {ego_acc}')
-                logging.info(f'acc of the ego: {ego_acc}')
-                writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
-                if mAP > self.best_mAP:
-                    self.best_mAP = mAP
-                    self.best_log = [
-                        f'(val) mAP: {mAP}',
-                        f'(val) mAP of the c: {c_mAP}',
-                        f'(val) mAP of the b: {b_mAP}',
-                        f'(val) mAP of the p: {p_mAP}',
-                        f'(val) mAP of the c+: {group_c_mAP}',
-                        f'(val) mAP of the b+: {group_b_mAP}',
-                        f'(val) mAP of the p+: {group_p_mAP}'
-                    ]
-                    save_cp = True
-                print(f'best mAP : {self.best_mAP}')
-                logging.info(f'best mAP : {self.best_mAP}')
-
-                with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
-                    f.write('epoch: ' + str(self.cur_epoch))
-                    f.write('\n')
-                    f.write('best mAP: %.4f' % self.best_mAP)
-                    f.write('\n')
-                    f.write('mAP: %.4f' % mAP)
-                    f.write('\n')
-                    f.write('mAP of c: %.4f' % c_mAP)
-                    f.write('\n')
-                    f.write('mAP of b: %.4f' % b_mAP)
-                    f.write('\n')
-                    f.write('mAP of p: %.4f' % p_mAP)
-                    f.write('\n')
-                    f.write('mAP of c+: %.4f' % group_c_mAP)
-                    f.write('\n')
-                    f.write('mAP of b+: %.4f' % group_b_mAP)
-                    f.write('\n')
-                    f.write('mAP of p+: %.4f' % group_p_mAP)
-                    f.write('\n')
-            else:
-                mAP = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),
-                        )
-                c_mAP = average_precision_score(
-                        label_actor_list[:, :12],
-                        map_pred_actor_list[:, :12].astype(np.float32)
-                        )
-                b_mAP = average_precision_score(
-                        label_actor_list[:, 24:36],
-                        map_pred_actor_list[:, 24:36].astype(np.float32)
-                        )
-                p_mAP = average_precision_score(
-                        label_actor_list[:, 48:56],
-                        map_pred_actor_list[:, 48:56].astype(np.float32),
-                        )
-                group_c_mAP = average_precision_score(
-                        label_actor_list[:, 12:24],
-                        map_pred_actor_list[:, 12:24].astype(np.float32)
-                        )
-                group_b_mAP = average_precision_score(
-                        label_actor_list[:, 36:48],
-                        map_pred_actor_list[:, 36:48].astype(np.float32)
-                        )
-                group_p_mAP = average_precision_score(
-                        label_actor_list[:, 56:64],
-                        map_pred_actor_list[:, 56:64].astype(np.float32),
-                        )
-                mAP_per_class = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),	
-                        average=None)
-                print(f'(val) mAP: {mAP}')
-                logging.info(f'(val) mAP: {mAP}')
-                print(f'(val) mAP of the c: {c_mAP}')
-                logging.info(f'(val) mAP of the c: {c_mAP}')
-                print(f'(val) mAP of the b: {b_mAP}')
-                logging.info(f'(val) mAP of the b: {b_mAP}')
-                print(f'(val) mAP of the p: {p_mAP}')
-                logging.info(f'(val) mAP of the p: {p_mAP}')
-                print(f'(val) mAP of the c+: {group_c_mAP}')
-                logging.info(f'(val) mAP of the c+: {group_c_mAP}')
-                print(f'(val) mAP of the b+: {group_b_mAP}')
-                logging.info(f'(val) mAP of the b+: {group_b_mAP}')
-                print(f'(val) mAP of the p+: {group_p_mAP}')
-                logging.info(f'(val) mAP of the p+: {group_p_mAP}')
-
-                ego_acc = self.correct_ego / self.total_ego
-                print(f'acc of the ego: {ego_acc}')
-                logging.info(f'acc of the ego: {ego_acc}')
-                writer.add_scalar('ego', self.correct_ego/self.total_ego, self.cur_epoch)
-                if mAP > self.best_mAP:
-                    self.best_mAP = mAP
-                    self.best_log = [
-                        f'(val) mAP: {mAP}',
-                        f'(val) mAP of the c: {c_mAP}',
-                        f'(val) mAP of the b: {b_mAP}',
-                        f'(val) mAP of the p: {p_mAP}',
-                        f'(val) mAP of the c+: {group_c_mAP}',
-                        f'(val) mAP of the b+: {group_b_mAP}',
-                        f'(val) mAP of the p+: {group_p_mAP}'
-                    ]
-                    save_cp = True
-                    print(f'best mAP : {self.best_mAP}')
-                    logging.info(f'best mAP : {self.best_mAP}')
-
-                with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
-                    f.write('epoch: ' + str(self.cur_epoch))
-                    f.write('\n')
-                    f.write('best mAP: %.4f' % self.best_mAP)
-                    f.write('\n')
-                    f.write('mAP: %.4f' % mAP)
-                    f.write('\n')
-                    f.write('mAP of c: %.4f' % c_mAP)
-                    f.write('\n')
-                    f.write('mAP of b: %.4f' % b_mAP)
-                    f.write('\n')
-                    f.write('mAP of p: %.4f' % p_mAP)
-                    f.write('\n')
-                    f.write('mAP of c+: %.4f' % group_c_mAP)
-                    f.write('\n')
-                    f.write('mAP of b+: %.4f' % group_b_mAP)
-                    f.write('\n')
-                    f.write('mAP of p+: %.4f' % group_p_mAP)
-                    f.write('\n')
-
-                    f.write('c per class: + \n')
-                    for ap in mAP_per_class[:12].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-                    f.write('b per class: \n')
-                    for ap in mAP_per_class[12:24].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-                    f.write('c+ per class: \n')
-                    for ap in mAP_per_class[24:36].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-                    f.write('b+ per class: \n')
-                    for ap in mAP_per_class[36:48].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-                    f.write('p per class: \n')
-                    for ap in mAP_per_class[48:56].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-                    f.write('p+ per class: \n')
-                    for ap in mAP_per_class[56:64].tolist():
-                        f.write("%.4f " % ap)
-                    f.write('\n')
-                    f.write('*'*15 + '\n')
-            
             total_loss = self.loss_epoch / float(self.num_batches)
-            tqdm.write(f'Epoch {self.cur_epoch:03d} Loss: {total_loss:3.3f}')            
+            tqdm.write(f"Epoch {self.cur_epoch:03d} Loss: {total_loss:3.3f}")
             self.val_loss.append(total_loss)
+
         return save_cp, [mAP, total_loss]
 
     def save(self, is_best):
@@ -644,132 +387,80 @@ class Engine(object):
             self.bestval = self.val_loss[-1]
             self.bestval_epoch = self.cur_epoch
             save_best = True
-        
+
         if save_best:
-            torch.save(model.state_dict(), os.path.join(logdir, 'best_model.pth'))
-            # torch.save(optimizer.state_dict(), os.path.join(logdir, 'best_optim.pth'))
-            tqdm.write('====== Overwrote best model ======>')
+            torch.save(
+                self.model.state_dict(), os.path.join(logdir, "best_model.pth")
+            )
+            tqdm.write("====== Overwrote best model ======>")
 
-if __name__ == '__main__':
 
-    logging.basicConfig(
-        filename='train.log',          # Tên file log sẽ tạo ra
-        filemode='a',                  # 'a' = ghi tiếp, 'w' = ghi đè file mới
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        level=logging.INFO             # Bắt buộc đặt level là INFO trở lên
-    )
-
-    args, logdir = get_parser()
+if __name__ == "__main__":
+    args, logdir = parser()
     print(args)
-    logging.info(args)
-    logdir = logdir.replace(':', '_').replace('\n', '_')
-    logdir = logdir.replace(" ", "")
-    # 2. Lấy đường dẫn tuyệt đối
+    logdir = logdir.replace(":", "_").replace("\n", "_").replace(" ", "")
+
     abs_logdir = os.path.abspath(logdir)
+    if os.name == "nt" and not abs_logdir.startswith("\\\\?\\"):
+        abs_logdir = f"\\\\?\\{abs_logdir}"
 
-    # Nếu đang chạy trên Windows và chưa có prefix \\?\
-    if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
-        abs_logdir = f'\\\\?\\{abs_logdir}'
-
-    # Tạo thư mục và writer
     os.makedirs(abs_logdir, exist_ok=True)
-    writer = SummaryWriter(log_dir=abs_logdir)
+    writer = SummaryWriter(log_dir=logdir)
     seq_len = args.seq_len
 
     num_ego_class = 4
     num_actor_class = 64
-    if args.taco_class == 'Action':
-        num_actor_class = 20
-    elif args.taco_class == 'Object':
-        num_actor_class = 6
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+    print("initialize train set")
+    train_set = TACO(args=args, split="train")
+    print("initialize val set")
+    val_set = TACO(args=args, split="val")
 
-    print('initialize train set')
-    logging.info("initialize train set")
-    train_set = TACO(args=args, split='train')
-    print('initialize val set')
-    logging.info("initialize val set")
-    val_set = TACO(args=args, split='val')
+    dataloader_train = DataLoader(
+        train_set,
+        batch_size=6,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
+    dataloader_val = DataLoader(
+        val_set,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
+
     model = generate_model(args, num_ego_class, num_actor_class).cuda()
-    dataloader_train = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True, drop_last=True)    
-    dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True, drop_last=True)
-    # Model
-    
 
-    if 'mvit' == args.model_name:
-        params = set_lr(model)#
+    if "mvit" == args.model_name:
+        params = set_lr(model)
     else:
-        params = [{'params':model.parameters()}]
+        params = [{"params": model.parameters()}]
     optimizer = optim.AdamW(params, lr=args.lr, weight_decay=args.wd)
 
     if args.scheduler:
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_lr)
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda=lambda_lr
+        )
     else:
         scheduler = None
 
-    if args.resume_from_checkpoint:
-        model_path = os.path.join(args.cp)
-        print(f"===> Đang nạp weights từ: {model_path}")
-        logging.info(f"===> Đang nạp weights từ: {model_path}")
-        checkpoint = torch.load(model_path, map_location='cpu')
+    trainer = Engine(args, model, optimizer, num_actor_class, scheduler)
 
-        # 1. Bóc tách dictionary nếu bị lồng key
-        if isinstance(checkpoint, dict):
-            if 'model_state_dict' in checkpoint:
-                state_dict = checkpoint['model_state_dict']
-            elif 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            elif 'model' in checkpoint:
-                state_dict = checkpoint['model']
-            else:
-                state_dict = checkpoint
-        else:
-            state_dict = checkpoint
+    print(f"Checkpoint path: {logdir}")
 
-        # 2. Xóa các prefix ngoài ý muốn ('module.', '_orig_mod.')
-        clean_state_dict = {}
-        for k, v in state_dict.items():
-            new_k = k
-            if new_k.startswith("module."):
-                new_k = new_k[len("module."):]
-            if new_k.startswith("_orig_mod."):
-                new_k = new_k[len("_orig_mod."):]
-            clean_state_dict[new_k] = v
-
-        # 3. Lọc bỏ các layer bị lệch shape (nếu có chỉnh sửa channel/dim trước đó)
-        model_dict = model.state_dict()
-        matched_state_dict = {}
-        mismatched_keys = []
-
-        for k, v in clean_state_dict.items():
-            if k in model_dict:
-                if v.shape == model_dict[k].shape:
-                    matched_state_dict[k] = v
-                else:
-                    mismatched_keys.append((k, v.shape, model_dict[k].shape))
-
-        # 4. Nạp weights vào model
-        model.load_state_dict(matched_state_dict, strict=False)
-
-    # -----------	
-    model, optimizer, dataloader_train, dataloader_val  = accelerator.prepare(model, optimizer, dataloader_train, dataloader_val)
-    trainer = Engine(args,model,optimizer,num_actor_class,accelerator, scheduler)
-    # Create logdir
-    print(f'Checkpoint path: {logdir}')
-    logging.info(f'Checkpoint path: {logdir}')
     result_list = []
-    for epoch in range(trainer.cur_epoch, args.epochs): 
+    for epoch in range(trainer.cur_epoch, args.epochs):
         trainer.train()
-        if (epoch % args.val_every == 0 or epoch == args.epochs-1): 
-                is_best, res = trainer.validate(dataloader_val)
-                # trainer.validate(dataloader_val_train, None)
-                trainer.save(is_best)
-                result_list.append(res)
-    print('********** Best model **********')
-    logging.info('********** Best model **********')
+        if epoch % args.val_every == 0 or epoch == args.epochs - 1:
+            is_best, res = trainer.validate(dataloader_val)
+            trainer.save(is_best)
+            result_list.append(res)
+
+    print("********** Best model **********")
     for s in trainer.best_log:
         print(s)
-        logging.info(s)
-    plot_result(np.array(result_list),args)
+    plot_result(np.array(result_list), args)

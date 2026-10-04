@@ -35,7 +35,7 @@ def get_eval_parser():
     parser.add_argument('--model_index', type=int, default=-1)
     parser.add_argument('--cp', type=str, default='best_model.pth')
     parser.add_argument('--plot', help="", action="store_true")
-    parser.add_argument('--plot_threshold', type=float, default=0.5, help='')
+    parser.add_argument('--plot_threshold', type=float, default=0, help='')
     parser.add_argument('--plot_mode', type=str, default='')
     parser.add_argument('--val_confusion', help="", action="store_true")
     parser.add_argument('--scale', type=float, default=-1.0)
@@ -45,9 +45,7 @@ def get_eval_parser():
     parser.add_argument('--gt', help="", action="store_true")
     parser.add_argument('--num_objects', type=int, default=-1)
 
-    # taco classes
-    parser.add_argument('--taco_class', type= str, default= 'both', help= 'Set taco class')
-    
+
     args = parser.parse_args()
 
 
@@ -64,8 +62,8 @@ def get_eval_parser():
     if args.model_name in ['action_slot', 'slot_savi', 'slot_mo', 'slot_vps']:
         logdir = os.path.join(
             based_log,
-            'num_slots' + str(args.num_slots) + '_'
-            +'obj_mask' + str(args.obj_mask) 
+            'num_slots: ' + str(args.num_slots) + '\n'
+            +'obj_mask: ' + str(args.obj_mask) 
             )
     else:
         logdir = based_log

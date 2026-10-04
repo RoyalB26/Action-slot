@@ -7,8 +7,6 @@ from tqdm import tqdm
 import torch.nn as nn
 import numpy as np
 import torch
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 import cv2
@@ -23,7 +21,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import average_precision_score, precision_score, recall_score, accuracy_score, hamming_loss
 from PIL import Image, ImageDraw
-from visualize import visualize_dataset_loss
+
 sys.path.append('../datasets')
 sys.path.append('../configs')
 sys.path.append('../models')
@@ -64,20 +62,7 @@ actor_table = ['c:z1-z2', 'c:z1-z3', 'c:z1-z4',
                 'p+:c3-c2', 'p+:c3-c4', 
                 'p+:c4-c1', 'p+:c4-c3',
                 'bg'] 
-
-objects_table= {'c': 0, 'c+': 1,
-                'b': 2, 'b+': 3,
-                'p':4, 'p+': 5}
-
-actions_table= {'z1-z2': 0, 'z1-z3': 1, 'z1-z4': 2,
-                'z2-z1': 3, 'z2-z3': 4, 'z2-z4': 5,
-                'z3-z1': 6, 'z3-z2': 7, 'z3-z4': 8,
-                'z4-z1': 9, 'z4-z2': 10, 'z4-z3': 11,
-                'c1-c2': 12, 'c1-c4': 13,
-                'c2-c1': 14, 'c2-c3': 15,
-                'c3-c2': 16, 'c3-c4': 17,
-                'c4-c1': 18, 'c4-c3': 19}
-
+                    
 def generate_distinct_colors(num_colors):
     colors = []
     for i in range(num_colors):
@@ -88,7 +73,7 @@ def generate_distinct_colors(num_colors):
         colors.append(np.array(rgb_color))
     return colors
 
-def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, threshold, mode, class_type):
+def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, threshold, mode):
 
 
     num_pos = 0
@@ -97,18 +82,14 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
     actor_str = ''
     actor = actor[0]
     pred_actor = pred_actor[0]
+
     pred_actor = torch.sigmoid(pred_actor)
     pred_actor = pred_actor > 0.5
     if args.allocated_slot:
         for i, a in enumerate(actor):
             if a.data == 1.0:
                 num_pos += 1
-                if class_type == 'both':
-                    actor_str += actor_table[i]
-                elif class_type == 'Action':
-                    actor_str +=  actions_table[i]
-                else:
-                    actor_str += objects_table[i]
+                actor_str += actor_table[i]
                 if pred_actor[i].data == True:
                     actor_str += '  TP'
                     num_tp +=1
@@ -117,20 +98,10 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
                     num_fn +=1
             else:
                 if pred_actor[i].data == True:
-                    if class_type == 'both':
-                        actor_str += actor_table[i]
-                    elif class_type == 'Action':
-                        actor_str +=  actions_table[i]
-                    else:
-                        actor_str += objects_table[i]
+                    actor_str += actor_table[i] 
                     actor_str += '                  FP'
                 else:
-                    if class_type == 'both':
-                        actor_str += actor_table[i]
-                    elif class_type == 'Action':
-                        actor_str +=  actions_table[i]
-                    else:
-                        actor_str += objects_table[i]
+                    actor_str += actor_table[i] 
                     actor_str += '                          TN'
             actor_str +='\n'
         # if num_pos < num_tp and model_name == 'action_slot':
@@ -223,55 +194,26 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
             plt.close()
 
         elif mode == 'occlusion':
-            
-            color_car = np.array([1.0, 0.0, 0.0])    # Red
-            color_bike = np.array([0.0, 0.5, 1.0])   # Blue
-            color_pedestrian= np.array([0.0, 1.0, 0.0]) # Green
-            alpha = 0.4 
 
+            alpha_1 = 0.2
+            alpha_2 = 0.2
+            alpha_3 = 0.2
+
+            color_1 = np.array([1.0, 0.0, 0.0])    # Red
+            color_2 = np.array([0.0, 1.0, 0.0])    # Green
+
+
+            colors = [color_1, color_2]
+            # Overlay the masks on raw_j with opacity
             bool_mask_list = []
             attn_mask_list = []
-            color_list = []
+            bool_mask_list.append(masks_j[48] > threshold)
+            bool_mask_list.append(masks_j[50] > threshold)
+            attn_mask_list.append((masks_j[48] > threshold).astype('uint8').reshape((128,384)))
+            attn_mask_list.append((masks_j[50] > threshold).astype('uint8').reshape((128,384)))
 
-
-            for i, a in enumerate(actor):
-                if a.data == 1.0: 
-                    
-
-                    mask_i = masks_j[i]
-                    m_min = mask_i.min()
-                    m_max = mask_i.max()
-                    norm_mask = (mask_i - m_min) / (m_max - m_min + 1e-8) 
-                    binary_mask = norm_mask > threshold
-                    # -----------------------------------------------------
-
-                    if not binary_mask.any():
-                        continue
-
-
-                    # Car (c) and Group of Car (c+): index 0 - 23
-                    if 0 <= i <= 23:
-                        bool_mask_list.append(binary_mask)
-                        attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
-                        color_list.append(color_car)
-                    
-                    # Bike (b) and Group of Bike (b+): index 24 - 47
-                    elif 24 <= i <= 47:
-                        bool_mask_list.append(binary_mask)
-                        attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
-                        color_list.append(color_bike)
-                    
-                    # Pedestrian and Group of pedestrian
-                    else:
-                        bool_mask_list.append(binary_mask)
-                        attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
-                        color_list.append(color_pedestrian)
-
-            # 4. Alpha Blending
-            for num_gt in range(len(bool_mask_list)):
-                raw_j[bool_mask_list[num_gt], :3] = attn_mask_list[num_gt][bool_mask_list[num_gt]][:, np.newaxis] * color_list[num_gt] * alpha + raw_j[bool_mask_list[num_gt], :3] * (1 - alpha)
-
-            # Kết xuất và lưu 
+            raw_j[bool_mask_list[0], :3] = attn_mask_list[0][bool_mask_list[0]][:, np.newaxis] * colors[0] * alpha_1 + raw_j[bool_mask_list[0], :3] * (1 - alpha_1) 
+            raw_j[bool_mask_list[1], :3] = attn_mask_list[1][bool_mask_list[1]][:, np.newaxis] * colors[1] * alpha_1 + raw_j[bool_mask_list[1], :3] * (1 - alpha_1) 
             plt.imshow(raw_j, cmap='gist_rainbow')
             plt.axis('off')
 
@@ -281,7 +223,7 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
 
         else:
 
-            alpha_1 = 0.4
+            alpha_1 = 0.2
             alpha_2 = 0.2
             alpha_3 = 0.2
 
@@ -303,23 +245,8 @@ def plot_slot(attn, model_name, map, id, v, raw, actor, pred_actor, logdir, thre
             attn_mask_list = []
             for i, a in enumerate(actor):
                 if a.data == 1.0:
-
-                    mask_i = masks_j[i]
-                    m_min = mask_i.min()
-                    m_max = mask_i.max()
-                    norm_mask = (mask_i - m_min) / (m_max - m_min + 1e-8) 
-                    binary_mask = norm_mask > threshold
-                    # -----------------------------------------------------
-
-                    if not binary_mask.any():
-                        continue
-
-                    bool_mask_list.append(binary_mask)
-                    attn_mask_list.append(binary_mask.astype('uint8').reshape((128,384)))
-                    # color_list.append(color_bike)
-
-                    # bool_mask_list.append(masks_j[i] > threshold)
-                    # attn_mask_list.append((masks_j[i] > threshold).astype('uint8').reshape((128,384)))
+                    bool_mask_list.append(masks_j[i] > threshold)
+                    attn_mask_list.append((masks_j[i] > threshold).astype('uint8').reshape((128,384)))
 
             for num_gt in range(len(bool_mask_list)):
                 raw_j[bool_mask_list[num_gt], :3] = attn_mask_list[num_gt][bool_mask_list[num_gt]][:, np.newaxis] * colors[num_gt] * alpha_1 + raw_j[bool_mask_list[num_gt], :3] * (1 - alpha_1) 
@@ -526,7 +453,9 @@ def calculate_confusion(confusion_label, pred):
 
 
 
-
+torch.cuda.empty_cache()
+args, logdir = get_eval_parser()
+print(args)
 
 class Engine(object):
     """Engine that runs training and inference.
@@ -556,9 +485,6 @@ class Engine(object):
             label_actor_list = []
             map_pred_actor_list = []
             # num_selected_sample = 0
-
-            scenario_list = []
-
             for batch_num, data in enumerate(tqdm(dataloader)):
                 # if args.plot_mode == '':
                 #     max_num_obj = data['max_num_obj']
@@ -584,9 +510,6 @@ class Engine(object):
                 if args.val_confusion:
                     confusion_label = data['confusion_label']
                 scenario = map + '_'+id + '_' + v
-
-                for m, i, var in zip(data['map'], data['id'], data['variants']):
-                    scenario_list.append(f"{m}_{i}_{var}")
 
                 if args.box:
                     box_in = data['box']
@@ -622,7 +545,7 @@ class Engine(object):
                                     for c_idx in channel_idx:
                                         plot_mvit(attn[0], c_idx, raw, logdir , id, v, j, grid_size=(thw[1],thw[2]))
                             else:
-                                plot_slot(attn, args.model_name, map, id, v, raw, actor, pred_actor, logdir, args.plot_threshold, args.plot_mode, args.taco_class)
+                                plot_slot(attn, args.model_name, map, id, v, raw, actor, pred_actor, logdir, args.plot_threshold, args.plot_mode)
 
                 else:
                     pred_ego, pred_actor = model(inputs)
@@ -674,121 +597,55 @@ class Engine(object):
             map_pred_actor_list = np.array(map_pred_actor_list)
             label_actor_list = np.array(label_actor_list)
             
-            if args.taco_class == 'Action':
-                mAP = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),
-                        )
-                z_mAP = average_precision_score(
-                        label_actor_list[:, 0:12],
-                        map_pred_actor_list[:, 0:12].astype(np.float32)
-                )
+            mAP = average_precision_score(
+                    label_actor_list,
+                    map_pred_actor_list.astype(np.float32),
+                    )
+            c_mAP = average_precision_score(
+                    label_actor_list[:, :12],
+                    map_pred_actor_list[:, :12].astype(np.float32)
+                    )
+            b_mAP = average_precision_score(
+                    label_actor_list[:, 24:36],
+                    map_pred_actor_list[:, 24:36].astype(np.float32)
+                    )
+            p_mAP = average_precision_score(
+                    label_actor_list[:, 48:56],
+                    map_pred_actor_list[:, 48:56].astype(np.float32),
+                    )
+            group_c_mAP = average_precision_score(
+                    label_actor_list[:, 12:24],
+                    map_pred_actor_list[:, 12:24].astype(np.float32)
+                    )
+            group_b_mAP = average_precision_score(
+                    label_actor_list[:, 36:48],
+                    map_pred_actor_list[:, 36:48].astype(np.float32)
+                    )
+            group_p_mAP = average_precision_score(
+                    label_actor_list[:, 56:64],
+                    map_pred_actor_list[:, 56:64].astype(np.float32),
+                    )
+            mAP_per_class = average_precision_score(
+                    label_actor_list,
+                    map_pred_actor_list.astype(np.float32), 
+                    average=None)
 
-                c_mAP = average_precision_score(
-                        label_actor_list[:, 12:20],
-                        map_pred_actor_list[:, 12:20].astype(np.float32)
-                )
-                mAP_per_class = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),	
-                        average=None)
+            for i, ap in enumerate(mAP_per_class):
+                mAP_per_class[i] = np.round(ap, 3)*100
+            print(f'(val) mAP of the actor: {mAP}')
+            print(f'(val) mAP of the c: {c_mAP}')
+            print(f'(val) mAP of the b: {b_mAP}')
+            print(f'(val) mAP of the p: {p_mAP}')
+            print(f'(val) mAP of the c+: {group_c_mAP}')
+            print(f'(val) mAP of the b+: {group_b_mAP}')
+            print(f'(val) mAP of the p+: {group_p_mAP}')
 
-                print(f'(val) mAP: {mAP}')
-                print(f'(val) mAP of z actions: {z_mAP}')
-                print(f'(val) mAP of c actions: {c_mAP}')
-                print('z per class: \n')
-                for ap in mAP_per_class[:12].tolist():
-                    print("%.4f " % ap, end = ' ')
-                print('\nc per class: \n')
-                for ap in mAP_per_class[12:20].tolist():
-                    print("%.4f " % ap, end =  " ")
-                print()
-            elif args.taco_class == 'Object':
-
-                mAP = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),
-                        )
-                c_mAP = average_precision_score(
-                        label_actor_list[:, :1],
-                        map_pred_actor_list[:, :1].astype(np.float32)
-                        )
-                b_mAP = average_precision_score(
-                        label_actor_list[:, 2:3],
-                        map_pred_actor_list[:, 2:3].astype(np.float32)
-                        )
-                p_mAP = average_precision_score(
-                        label_actor_list[:, 4:5],
-                        map_pred_actor_list[:, 4:5].astype(np.float32),
-                        )
-                group_c_mAP = average_precision_score(
-                        label_actor_list[:, 1:2],
-                        map_pred_actor_list[:, 1:2].astype(np.float32)
-                        )
-                group_b_mAP = average_precision_score(
-                        label_actor_list[:, 3:4],
-                        map_pred_actor_list[:, 3:4].astype(np.float32)
-                        )
-                group_p_mAP = average_precision_score(
-                        label_actor_list[:, 5:6],
-                        map_pred_actor_list[:, 5:6].astype(np.float32),
-                        )
-                mAP_per_class = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),	
-                        average=None)
-
-                print(f'(val) mAP: {mAP}')
-                print(f'(val) mAP of the c: {c_mAP}')
-                print(f'(val) mAP of the b: {b_mAP}')
-                print(f'(val) mAP of the p: {p_mAP}')
-                print(f'(val) mAP of the c+: {group_c_mAP}')
-                print(f'(val) mAP of the b+: {group_b_mAP}')
-                print(f'(val) mAP of the p+: {group_p_mAP}')
-
-            else:
-                mAP_per_class = average_precision_score(
-                        label_actor_list,
-                        map_pred_actor_list.astype(np.float32),	
-                        average=None)
-                
-                mAP= np.nanmean(mAP_per_class)
-
-                c_mAP = average_precision_score(
-                        label_actor_list[:, :12],
-                        map_pred_actor_list[:, :12].astype(np.float32)
-                        )
-                b_mAP = average_precision_score(
-                        label_actor_list[:, 24:36],
-                        map_pred_actor_list[:, 24:36].astype(np.float32)
-                        )
-                p_mAP = average_precision_score(
-                        label_actor_list[:, 48:56],
-                        map_pred_actor_list[:, 48:56].astype(np.float32),
-                        )
-                group_c_mAP = average_precision_score(
-                        label_actor_list[:, 12:24],
-                        map_pred_actor_list[:, 12:24].astype(np.float32)
-                        )
-                group_b_mAP = average_precision_score(
-                        label_actor_list[:, 36:48],
-                        map_pred_actor_list[:, 36:48].astype(np.float32)
-                        )
-                group_p_mAP = average_precision_score(
-                        label_actor_list[:, 56:64],
-                        map_pred_actor_list[:, 56:64].astype(np.float32),
-                        )
-
-
-                print(f'(val) mAP: {mAP}')
-                print(f'(val) mAP of the c: {c_mAP}')
-                print(f'(val) mAP of the b: {b_mAP}')
-                print(f'(val) mAP of the p: {p_mAP}')
-                print(f'(val) mAP of the c+: {group_c_mAP}')
-                print(f'(val) mAP of the b+: {group_b_mAP}')
-                print(f'(val) mAP of the p+: {group_p_mAP}')
-
-   
+            print(f'(val) AP of the c: {mAP_per_class[:12]}')
+            print(f'(val) AP of the c+: {mAP_per_class[12:24]}')
+            print(f'(val) AP of the k: {mAP_per_class[24:36]}')
+            print(f'(val) AP of the k+: {mAP_per_class[36:48]}')
+            print(f'(val) AP of the p: {mAP_per_class[48:56]}')
+            print(f'(val) AP of the p+: {mAP_per_class[56:64]}')
 
             print('**********************')
             print(f'acc of the ego: {correct_ego/total_ego}')
@@ -796,42 +653,20 @@ class Engine(object):
 
             # print(num_selected_sample)
 
-if __name__ == "__main__":
-    torch.cuda.empty_cache()
-    args, logdir = get_eval_parser()
-    print(args)
-    torch.cuda.empty_cache() 
-    seq_len = args.seq_len
-    num_ego_class = 4
-    num_actor_class = 64
-    if args.taco_class == 'Action':
-        num_actor_class = 20
-    elif args.taco_class == 'Object':
-        num_actor_class = 6
+            
+torch.cuda.empty_cache() 
+seq_len = args.seq_len
+num_ego_class = 4
+num_actor_class = 64
 
-    # Data
-    val_set = taco.TACO(args=args, split='val')
-    print(len(val_set))
-    dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=4, pin_memory=True, drop_last=True)
+# Data
+val_set = taco.TACO(args=args, split='val')
+dataloader_val = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=4, pin_memory=True, drop_last=True)
 
-    model = generate_model(args, num_ego_class, num_actor_class).cuda()
-    trainer = Engine(args)
+model = generate_model(args, num_ego_class, num_actor_class).cuda()
+trainer = Engine(args)
 
-    model_path = os.path.join(args.cp)
-    print(f"===> Đang nạp weights từ: {model_path}")
-    checkpoint = torch.load(model_path, map_location='cpu')
+model_path = os.path.join(args.cp)
+model.load_state_dict(torch.load(model_path))
 
-    # 1. Bóc tách dictionary nếu bị lồng key
-    if isinstance(checkpoint, dict):
-        if 'model_state_dict' in checkpoint:
-            state_dict = checkpoint['model_state_dict']
-        elif 'state_dict' in checkpoint:
-            state_dict = checkpoint['state_dict']
-        elif 'model' in checkpoint:
-            state_dict = checkpoint['model']
-        else:
-            state_dict = checkpoint
-    else:
-        state_dict = checkpoint
-
-    trainer.validate(model, dataloader_val, None)
+trainer.validate(model, dataloader_val, None)

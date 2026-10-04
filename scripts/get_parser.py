@@ -1,7 +1,7 @@
 import argparse
 import os
 
-def get_parser():
+def parser():
     parser = argparse.ArgumentParser()
 
     #dataset
@@ -50,8 +50,7 @@ def get_parser():
     parser.add_argument('--num_workers', type=int, default=8, help='Number of train epochs.')
     parser.add_argument('--parallel', help="", action="store_true")
     parser.add_argument('--tune_block_idx', type=int, default=[0,1,2,-3,-2,-1],nargs='+')
-    parser.add_argument('--resume_from_checkpoint', help="", action="store_true")
-    parser.add_argument('--start_epoch', type=int, default= 0)
+    
 
     # eval
     parser.add_argument('--model_index', type=int, default=-1)
@@ -67,8 +66,6 @@ def get_parser():
     parser.add_argument('--test', help="", action="store_true")
     parser.add_argument('--gt', help="", action="store_true")
 
-    # taco classes
-    parser.add_argument('--taco_class', type= str, default= 'both', help= 'Set taco class')
 
     args = parser.parse_args()
 

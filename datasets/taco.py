@@ -44,10 +44,6 @@ class TACO(Dataset):
         self.step = []
         self.start_idx = []
         self.num_class = 64
-        if args.taco_class == 'Action':
-            self.num_class = 20
-        elif args.taco_class == 'Object':
-            self.num_class = 6
         self.max_num_obj = []
         
         self.Max_N = Max_N
@@ -60,20 +56,13 @@ class TACO(Dataset):
         total_frame = 0
         total_videos = 0
 
+
         n=0
-        specific= ''
-        if args.taco_class == 'Action':
-            specific= 'action_'
-        elif args.taco_class == 'Object':
-            specific= 'object_'
+
         f = open('../datasets/taco_'+split+'_data.json')
-
-        scenario_list= json.load(f)
-
-        f_label = open('../datasets/taco_'+ specific + split+'_label.json')
+        scenario_list = json.load(f)
+        f_label = open('../datasets/taco_'+split+'_label.json')
         label_list = json.load(f_label)
-
-
         group_rules = {
             "2part": ["ap_Town10HD"],
             "part3": ["ap_Town03", "ap_Town04", "ap_Town6", "ap_Town07"],
@@ -89,7 +78,7 @@ class TACO(Dataset):
         mapping = {item: part for part, items in group_rules.items() for item in items}
         mapping2 = {item: part for part, items in group_rules2.items() for item in items}
 
-        for scenario in scenario_list:
+        for scenario in tqdm(scenario_list):
             if not scenario in label_list:
                 continue
             gt = label_list[scenario]
@@ -224,7 +213,7 @@ class TACO(Dataset):
                         
             
         # for each data
-        for data in self.videos_list:
+        for data in tqdm(self.videos_list):
             root = data[0][0].split('/')
             root = root[:-3]
             root = '/'+os.path.join(*root)
@@ -274,7 +263,7 @@ class TACO(Dataset):
             return out
             
         
-        for data,idx in zip(self.videos_list,self.idx):
+        for data,idx in tqdm(zip(self.videos_list,self.idx)):
             root = data[0][0].split('/')
             root = root[:-3]
             root = '/'+os.path.join(*root)
@@ -431,12 +420,12 @@ def get_obj_mask(obj_path):
     obj_masks = np.load(obj_path)
     # obj_masks = list(seg_dict.values())
     if obj_masks.shape[0] == 0:
-        obj_masks = torch.zeros([self.num_class, 32, 96], dtype=torch.int32)
+        obj_masks = torch.zeros([64, 32, 96], dtype=torch.int32)
     else:
         obj_masks = torch.from_numpy(np.stack(obj_masks, 0))
     # img = torch.flip(torch.from_numpy(img).type(torch.int).permute(2,0,1),[0])
     obj_masks = obj_masks.type(torch.int)
-    pad_num = self.num_class - obj_masks.shape[0]
+    pad_num = 64 - obj_masks.shape[0]
     obj_masks = torch.cat((obj_masks, torch.zeros([pad_num, 32, 96], dtype=torch.int32)), dim=0)
     obj_masks = obj_masks.type(torch.float32)
 
@@ -477,12 +466,8 @@ def to_np_no_norm(v):
         v[i] = transform(v[i])
     return v
 
-def get_labels(args, gt, num_slots=6):
-    num_class= 64   
-    if args.taco_class == 'Action':
-        num_class = 20
-    elif args.taco_class == 'Object':
-        num_class = 6
+def get_labels(args, gt, num_slots=64):   
+    num_class = 64
     model_name = args.model_name
     allocated_slot = args.allocated_slot
     agent_label = gt['agents']
@@ -521,20 +506,6 @@ def get_labels(args, gt, num_slots=6):
                     'p+:c3-c2': 60, 'p+:c3-c4': 61, 
                     'p+:c4-c1': 62, 'p+:c4-c3': 63 
                     }
-
-    objects_table= {'c': 0, 'c+': 1,
-                    'b': 2, 'b+': 3,
-                    'p':4, 'p+': 5}
-
-    actions_table= {'z1-z2': 0, 'z1-z3': 1, 'z1-z4': 2,
-                'z2-z1': 3, 'z2-z3': 4, 'z2-z4': 5,
-                'z3-z1': 6, 'z3-z2': 7, 'z3-z4': 8,
-                'z4-z1': 9, 'z4-z2': 10, 'z4-z3': 11,
-                'c1-c2': 12, 'c1-c4': 13,
-                'c2-c1': 14, 'c2-c3': 15,
-                'c3-c2': 16, 'c3-c4': 17,
-                'c4-c1': 18, 'c4-c3': 19}
-
 
     ego_label = torch.tensor(ego_label)
     agent_label = torch.FloatTensor(agent_label)
