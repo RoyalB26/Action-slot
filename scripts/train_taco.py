@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import average_precision_score
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import torch
 import torch.nn as nn
@@ -251,11 +251,17 @@ class Engine(object):
         self.model.train()
         self.num_batches = len(dataloader_train)
 
-        for data in tqdm(
+        pbar = tqdm(
             dataloader_train,
             desc=f"Train Epoch {self.cur_epoch}",
             disable=not self.accelerator.is_local_main_process,
-        ):
+            file=sys.stdout,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            leave=False,  # Xóa bar sau khi xong epoch để không tràn output
+        )
+
+        for data in pbar:
             self.step(data, "train")
 
         loss_epoch = self.loss_epoch / self.num_batches
@@ -276,11 +282,16 @@ class Engine(object):
         save_cp = False
 
         with torch.no_grad():
-            for data in tqdm(
+            pbar = tqdm(
                 dataloader,
-                desc="Validating (G=1 Streaming)",
+                desc="Validating (G=1)",
                 disable=not self.accelerator.is_local_main_process,
-            ):
+                file=sys.stdout,
+                dynamic_ncols=True,
+                mininterval=0.5,
+                leave=False,
+            )
+            for data in pbar:
                 self.step(data, "val")
 
             total_loss = self.loss_epoch / float(self.num_batches)
