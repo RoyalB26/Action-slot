@@ -96,7 +96,7 @@ class TACO(Dataset):
         )
 
         log_interval = max(1, len(scenario_list) // 10)
-
+        print(f"WANDB: {self.args.wandb} - BEGIN - disable_pbar: {disable_pbar}")
         for step_idx, scenario in enumerate(pbar if not disable_pbar else scenario_list):
             if not scenario in label_list:
                 continue
