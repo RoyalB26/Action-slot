@@ -404,8 +404,16 @@ if __name__ == "__main__":
     if accelerator.is_main_process:
         init_kwargs = {}
         if args.wandb:
-            init_kwargs = {"wandb": {"name": os.path.basename(abs_logdir)}}
-        accelerator.init_trackers("runs", init_kwargs=init_kwargs)
+            init_kwargs = {
+                "wandb": {
+                    "name": os.path.basename(abs_logdir),  # Tên run hiển thị trên W&B
+                    "config": vars(args)                   # Lưu toàn bộ hyperparameter
+                }
+            }
+        accelerator.init_trackers(
+            project_name=os.getenv("WANDB_PROJECT", "taco_experiments"), 
+            init_kwargs=init_kwargs
+        )
 
     args.device = accelerator.device
     seq_len = args.seq_len
