@@ -276,7 +276,18 @@ class Engine(object):
                         "epoch": self.cur_epoch,
                     }
                 )
+        map_pred_actor_list = np.stack(self.map_pred_actor_list, axis=0)
+        label_actor_list = np.stack(self.label_actor_list, axis=0)
 
+        map_pred_actor_list = map_pred_actor_list.reshape((map_pred_actor_list.shape[0]*args.batch_size, num_actor_class))
+        label_actor_list = label_actor_list.reshape((label_actor_list.shape[0]*args.batch_size, num_actor_class))
+
+        mAP = average_precision_score(
+            label_actor_list,
+            map_pred_actor_list.astype(np.float32))
+
+
+        
         loss_epoch = self.loss_epoch / self.num_batches
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
         grpo_loss_epoch = self.grpo_loss_epoch / self.num_batches
@@ -288,6 +299,7 @@ class Engine(object):
                 "train/actor_loss": actor_loss_epoch,
                 "train/grpo_loss": grpo_loss_epoch,
                 "train/ego_loss": self.ego_loss_epoch / self.num_batches,
+                "train/mAP": mAP,
                 "epoch": self.cur_epoch,
             },
             step=self.cur_epoch,
@@ -297,8 +309,12 @@ class Engine(object):
         self.accelerator.print(
             f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
         )
+        self.accelerator.print(f'(train) mAP of the actor: {mAP}')
         self.train_loss.append(loss_epoch)
         self.cur_epoch += 1
+
+
+
 
     def validate(self, dataloader):
         self.model.eval()
