@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 import torch 
 from torch.utils.data import Dataset
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 import sys
 import json 
 import random
