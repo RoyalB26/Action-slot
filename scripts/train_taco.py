@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 from torchvision import models
 
 torch.backends.cudnn.benchmark = True
-
+from pcgrad import PCGrad
 from datasets.taco import TACO
 from get_parser import parser
 from loss import ActionSlotLoss
@@ -86,7 +86,10 @@ class Engine(object):
         self.args = args
         self.accelerator = accelerator
         self.model = model
-        self.optimizer = optimizer
+
+        self.raw_optimizer = optimizer
+        self.optimizer = PCGrad(optimizer)
+
         self.scheduler = scheduler
         self.num_actor_class = num_actor_class
         self.num_groups = getattr(args, "num_groups", 4)
@@ -136,7 +139,7 @@ class Engine(object):
         # HUẤN LUYỆN (TRAIN MODE) VỚI GRPO (G NHÓM TRAJECTORY)
         # =========================================================================
         if mode == "train":
-            # 1. Rollout Policy cũ (pi_old) để lấy mẫu G nhóm S
+            # 1. Rollout Policy cũ (pi_old)
             with torch.no_grad():
                 pred_ego_old, pred_actor_old, _, old_log_prob = self.model(
                     inputs, num_groups=self.num_groups
@@ -147,7 +150,7 @@ class Engine(object):
                 inputs, num_groups=self.num_groups
             )
 
-            # 3. Tính toán Loss (Supervised + GRPO)
+            # 3. Tính toán các losses riêng rẽ
             pred_dict = {
                 "ego": pred_ego,
                 "actor": pred_actor,
@@ -166,20 +169,25 @@ class Engine(object):
             grpo_loss = loss_dict["grpo"]
             attn_loss = loss_dict["attn"]["attn_loss"]
 
-            total_loss = (
-                actor_loss
-                + self.args.ego_loss_weight * ego_loss
-                + grpo_loss
-                + attn_loss
-            )
+            # TÁCH THÀNH 2 MỤC TIÊU ĐỂ PCGRAD TRIỆT TIÊU XUNG ĐỘT GRADIENT:
+            # Mục tiêu 1: Supervised learning chính
+            loss_supervised = actor_loss + self.args.ego_loss_weight * ego_loss + attn_loss
+            # Mục tiêu 2: Group Relative Policy Optimization
+            loss_rl = grpo_loss
 
+            # 4. THỰC HIỆN BACKWARD BẰNG PCGRAD
             self.optimizer.zero_grad()
-            self.accelerator.backward(total_loss)
+            self.optimizer.pcgrad_backward([loss_supervised, loss_rl])
+            
+            # Clip gradient an toàn để chống nổ số
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            
             self.optimizer.step()
             if self.scheduler is not None:
                 self.scheduler.step()
 
-            # Gather metrics qua các device
+            # Tracking logs
+            total_loss = loss_supervised.detach() + loss_rl.detach()
             total_loss_gathered = self.accelerator.gather(total_loss).mean().item()
             actor_loss_gathered = self.accelerator.gather(actor_loss).mean().item()
             grpo_loss_gathered = self.accelerator.gather(grpo_loss).mean().item()
@@ -190,7 +198,7 @@ class Engine(object):
             self.grpo_loss_epoch += float(grpo_loss_gathered)
             self.ego_loss_epoch += float(ego_loss_gathered)
 
-            # Lấy trung bình dự đoán qua G nhóm để đo độ chính xác lúc train
+            # Predictions logging
             pred_actor_mean = torch.sigmoid(pred_actor.mean(dim=1))
             gathered_actor_preds = self.accelerator.gather_for_metrics(pred_actor_mean)
             gathered_actor_labels = self.accelerator.gather_for_metrics(batch["actor"])
