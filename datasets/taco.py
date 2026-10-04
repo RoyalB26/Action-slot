@@ -106,8 +106,8 @@ class TACO(Dataset):
                 progress_pct = (step_idx + 1) / len(scenario_list) * 100
                 self.accelerator.log(
                     {
-                        "batch_progress_pct": progress_pct,
-                        "current_batch": step_idx + 1,
+                        f"{self.split}/scenario_list/batch_progress_pct": progress_pct,
+                        f"{self.split}/scenario_list/current_batch": step_idx + 1,
                     }
                 )
             # ------------get labels-------------
@@ -259,8 +259,8 @@ class TACO(Dataset):
                 progress_pct = (step_idx + 1) / len(self.videos_list) * 100
                 self.accelerator.log(
                     {
-                        "batch_progress_pct": progress_pct,
-                        "current_batch": step_idx + 1,
+                        f"{self.split}/self.videos_list/batch_progress_pct": progress_pct,
+                        f"{self.split}/self.videos_list/current_batch": step_idx + 1,
                     }
                 )
             root = data[0][0].split('/')
@@ -335,8 +335,8 @@ class TACO(Dataset):
                 progress_pct = (step_idx + 1) / len(self.videos_list) * 100
                 self.accelerator.log(
                     {
-                        "batch_progress_pct": progress_pct,
-                        "current_batch": step_idx + 1,
+                        f"{self.split}/zip(self.videos_list, self.idx)/batch_progress_pct": progress_pct,
+                        f"{self.split}/zip(self.videos_list, self.idx)/current_batch": step_idx + 1,
                     }
                 )
             root = data[0][0].split('/')
