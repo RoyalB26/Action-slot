@@ -411,7 +411,7 @@ class Engine(object):
 
     def save(self, is_best):
         if is_best and self.accelerator.is_main_process:
-            self.accelerator.wait_for_everyone()
+            
             unwrapped_model = self.accelerator.unwrap_model(self.model)
             save_path = os.path.join(self.logdir, "best_model.pth")
             self.accelerator.save(unwrapped_model.state_dict(), save_path)
