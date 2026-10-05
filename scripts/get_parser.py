@@ -51,7 +51,7 @@ def parser():
     parser.add_argument('--parallel', help="", action="store_true")
     parser.add_argument('--tune_block_idx', type=int, default=[0,1,2,-3,-2,-1],nargs='+')
     parser.add_argument('--wandb', action="store_true", help='Enable Weights & Biases logging and disable tqdm')
-
+    parser.add_argument("--stage1_epochs", type=int, default=30, help="Số epochs chạy Supervised trước khi bật GRPO")
     # eval
     parser.add_argument('--model_index', type=int, default=-1)
     parser.add_argument('--cp', type=str, default='best_model.pth')

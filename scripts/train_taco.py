@@ -70,6 +70,30 @@ def set_lr(model):
         {"params": [temp[1] for temp in params], "lr": 2e-2},
     ]
 
+def check_real_performance(y_true, y_pred, threshold=0.5):
+    """
+    y_true: [N, 64] (numpy array)
+    y_pred: [N, 64] (numpy array - sau khi qua sigmoid)
+    """
+    # 1. Tìm các class có ít nhất 1 sample xuất hiện trong batch
+    active_classes = np.where(y_true.sum(axis=0) > 0)[0]
+    print(f"Tổng số class thực tế xuất hiện trong 6 batch: {len(active_classes)} / 64")
+    
+    # 2. Tính AP riêng cho các class đang có mẫu
+    ap_list = []
+    for cls in active_classes:
+        ap = average_precision_score(y_true[:, cls], y_pred[:, cls])
+        ap_list.append(ap)
+        print(f"  Class {cls:02d}: AP = {ap:.4f} (Số mẫu dương: {int(y_true[:, cls].sum())})")
+        
+    real_mAP = np.mean(ap_list) if len(ap_list) > 0 else 0.0
+    print(f"===> mAP thực tế trên các active classes: {real_mAP * 100:.2f}%")
+    
+    # 3. Tính thêm F1-score / Accuracy tại ngưỡng threshold
+    pred_binary = (y_pred > threshold).astype(int)
+    correct_pos = ((pred_binary == 1) & (y_true == 1)).sum()
+    total_pos = y_true.sum()
+    print(f"===> Tỉ lệ bắt trúng nhãn dương (Recall): {correct_pos} / {int(total_pos)} ({correct_pos/max(total_pos,1)*100:.1f}%)")
 
 class Engine(object):
 
@@ -135,87 +159,102 @@ class Engine(object):
         seq_len = self.args.seq_len
         inputs = [video_in[i].to(dtype=torch.float32) for i in range(seq_len)]
 
-        # =========================================================================
-        # HUẤN LUYỆN (TRAIN MODE) VỚI GRPO (G NHÓM TRAJECTORY)
-        # =========================================================================
+        # Xác định giai đoạn hiện tại (Stage 1 hay Stage 2)
+        stage = 1 if self.cur_epoch < self.args.stage1_epochs else 2
+
         if mode == "train":
-            # 1. Rollout Policy cũ (pi_old)
-            with torch.no_grad():
-                pred_ego_old, pred_actor_old, _, old_log_prob = self.model(
+            # =================================================================
+            # STAGE 1: SUPERVISED WARMUP (TẮT HOÀN TOÀN GRPO, CHẠY G=1)
+            # =================================================================
+            if stage == 1:
+                # Chạy forward 1 lần duy nhất với G=1 (tiết kiệm 50% thời gian train ở stage 1)
+                pred_ego, pred_actor, attn, _ = self.model(inputs, num_groups=1)
+                if pred_actor.dim() == 3 and pred_actor.shape[1] == 1:
+                    pred_actor = pred_actor.squeeze(1)
+
+                pred_dict = {
+                    "ego": pred_ego,
+                    "actor": pred_actor,
+                    "attn": attn,
+                    "log_prob": None,
+                    "old_log_prob": None,
+                }
+                loss_dict = self.criterion(pred_dict, batch, validate=False)
+
+                ego_loss = (
+                    loss_dict["ego"]
+                    if loss_dict["ego"] is not None
+                    else torch.tensor(0.0, device=self.accelerator.device)
+                )
+                actor_loss = loss_dict["actor"]
+                attn_loss = loss_dict["attn"]["attn_loss"]
+
+                total_loss = actor_loss + self.args.ego_loss_weight * ego_loss + attn_loss
+
+                self.optimizer.zero_grad()
+                self.accelerator.backward(total_loss)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
+
+                # Logging
+                self.loss_epoch += float(self.accelerator.gather(total_loss).mean().item())
+                self.actor_loss_epoch += float(self.accelerator.gather(actor_loss).mean().item())
+                self.grpo_loss_epoch += 0.0
+
+                pred_actor_sig = torch.sigmoid(pred_actor)
+                self.map_pred_actor_list.append(self.accelerator.gather_for_metrics(pred_actor_sig).detach().cpu().numpy())
+                self.label_actor_list.append(self.accelerator.gather_for_metrics(batch["actor"]).detach().cpu().numpy())
+
+            # =================================================================
+            # STAGE 2: GRPO FINE-TUNING (TẮT ACTOR LOSS, CHỈ HỌC BẰNG GRPO LOSS)
+            # =================================================================
+            else:
+                # 1. Rollout pi_old lấy G nhóm trajectories
+                with torch.no_grad():
+                    pred_ego_old, pred_actor_old, _, old_log_prob = self.model(
+                        inputs, num_groups=self.num_groups
+                    )
+
+                # 2. Forward pi_theta
+                pred_ego, pred_actor, attn, log_prob = self.model(
                     inputs, num_groups=self.num_groups
                 )
 
-            # 2. Forward Policy hiện tại (pi_theta)
-            pred_ego, pred_actor, attn, log_prob = self.model(
-                inputs, num_groups=self.num_groups
-            )
+                pred_dict = {
+                    "ego": pred_ego,
+                    "actor": pred_actor,
+                    "attn": attn,
+                    "log_prob": log_prob,
+                    "old_log_prob": old_log_prob,
+                }
+                # Tại stage 2, criterion vẫn tính reward từ nhãn actor, nhưng chỉ backward qua grpo_loss
+                loss_dict = self.criterion(pred_dict, batch, validate=False)
+                
+                # CHỈ DÙNG GRPO LOSS
+                grpo_loss = loss_dict["grpo"]
+                total_loss = grpo_loss
 
-            # 3. Tính toán các losses riêng rẽ
-            pred_dict = {
-                "ego": pred_ego,
-                "actor": pred_actor,
-                "attn": attn,
-                "log_prob": log_prob,
-                "old_log_prob": old_log_prob,
-            }
-            loss_dict = self.criterion(pred_dict, batch, validate=False)
+                self.optimizer.zero_grad()
+                self.accelerator.backward(total_loss)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
-            ego_loss = (
-                loss_dict["ego"]
-                if loss_dict["ego"] is not None
-                else torch.tensor(0.0, device=self.accelerator.device)
-            )
-            actor_loss = loss_dict["actor"]
-            grpo_loss = loss_dict["grpo"]
-            attn_loss = loss_dict["attn"]["attn_loss"]
+                # Logging
+                self.loss_epoch += float(self.accelerator.gather(total_loss).mean().item())
+                self.actor_loss_epoch += float(self.accelerator.gather(loss_dict["actor"]).mean().item())
+                self.grpo_loss_epoch += float(self.accelerator.gather(grpo_loss).mean().item())
 
-            # TÁCH THÀNH 2 MỤC TIÊU ĐỂ PCGRAD TRIỆT TIÊU XUNG ĐỘT GRADIENT:
-            # Mục tiêu 1: Supervised learning chính
-            loss_supervised = actor_loss + self.args.ego_loss_weight * ego_loss + attn_loss
-            # Mục tiêu 2: Group Relative Policy Optimization
-            loss_rl = grpo_loss
+                pred_actor_mean = torch.sigmoid(pred_actor.mean(dim=1))
+                self.map_pred_actor_list.append(self.accelerator.gather_for_metrics(pred_actor_mean).detach().cpu().numpy())
+                self.label_actor_list.append(self.accelerator.gather_for_metrics(batch["actor"]).detach().cpu().numpy())
 
-            # 4. THỰC HIỆN BACKWARD BẰNG PCGRAD
-            self.optimizer.zero_grad()
-            self.optimizer.pcgrad_backward([loss_supervised, loss_rl])
-            
-            # Clip gradient an toàn để chống nổ số
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            
-            self.optimizer.step()
-            if self.scheduler is not None:
-                self.scheduler.step()
-
-            # Tracking logs
-            total_loss = loss_supervised.detach() + loss_rl.detach()
-            total_loss_gathered = self.accelerator.gather(total_loss).mean().item()
-            actor_loss_gathered = self.accelerator.gather(actor_loss).mean().item()
-            grpo_loss_gathered = self.accelerator.gather(grpo_loss).mean().item()
-            ego_loss_gathered = self.accelerator.gather(ego_loss).mean().item()
-
-            self.loss_epoch += float(total_loss_gathered)
-            self.actor_loss_epoch += float(actor_loss_gathered)
-            self.grpo_loss_epoch += float(grpo_loss_gathered)
-            self.ego_loss_epoch += float(ego_loss_gathered)
-
-            # Predictions logging
-            pred_actor_mean = torch.sigmoid(pred_actor.mean(dim=1))
-            gathered_actor_preds = self.accelerator.gather_for_metrics(pred_actor_mean)
-            gathered_actor_labels = self.accelerator.gather_for_metrics(batch["actor"])
-
-            self.map_pred_actor_list.append(gathered_actor_preds.detach().cpu().numpy())
-            self.label_actor_list.append(gathered_actor_labels.detach().cpu().numpy())
-
-            if pred_ego is not None:
-                _, pred_ego_idx = torch.max(pred_ego.data, 1)
-                correct = (pred_ego_idx == batch["ego"]).sum()
-                total = torch.tensor(batch["ego"].size(0), device=self.accelerator.device)
-                self.correct_ego += self.accelerator.gather(correct).sum().item()
-                self.total_ego += self.accelerator.gather(total).sum().item()
-
-        # =========================================================================
-        # ĐÁNH GIÁ (VAL / TEST MODE) - CHẠY DETERMINISTIC VỚI G = 1 (STREAMING EDGE)
-        # =========================================================================
+        # =====================================================================
+        # VALIDATE (G=1 STREAMING)
+        # =====================================================================
         else:
             with torch.no_grad():
                 pred_ego, pred_actor, attn, _ = self.model(inputs, num_groups=1)
@@ -230,30 +269,12 @@ class Engine(object):
                     "old_log_prob": None,
                 }
                 loss_dict = self.criterion(pred_dict, batch, validate=True)
+                total_loss = loss_dict["actor"]
 
-                actor_loss = loss_dict["actor"]
-                ego_loss = (
-                    loss_dict["ego"]
-                    if loss_dict["ego"] is not None
-                    else torch.tensor(0.0, device=self.accelerator.device)
-                )
-                total_loss = actor_loss + self.args.ego_loss_weight * ego_loss
-                total_loss_gathered = self.accelerator.gather(total_loss).mean().item()
-                self.loss_epoch += float(total_loss_gathered)
-
+                self.loss_epoch += float(self.accelerator.gather(total_loss).mean().item())
                 pred_actor_sig = torch.sigmoid(pred_actor)
-                gathered_preds = self.accelerator.gather_for_metrics(pred_actor_sig)
-                gathered_labels = self.accelerator.gather_for_metrics(batch["actor"])
-
-                self.map_pred_actor_list.append(gathered_preds.detach().cpu().numpy())
-                self.label_actor_list.append(gathered_labels.detach().cpu().numpy())
-
-                if pred_ego is not None:
-                    _, pred_ego_idx = torch.max(pred_ego.data, 1)
-                    correct = (pred_ego_idx == batch["ego"]).sum()
-                    total = torch.tensor(batch["ego"].size(0), device=self.accelerator.device)
-                    self.correct_ego += self.accelerator.gather(correct).sum().item()
-                    self.total_ego += self.accelerator.gather(total).sum().item()
+                self.map_pred_actor_list.append(self.accelerator.gather_for_metrics(pred_actor_sig).detach().cpu().numpy())
+                self.label_actor_list.append(self.accelerator.gather_for_metrics(batch["actor"]).detach().cpu().numpy())
 
     def train(self, dataloader_train):
         self.reset_log()
@@ -322,6 +343,7 @@ class Engine(object):
         self.accelerator.print(
             f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
         )
+        check_real_performance(label_actor_list, map_pred_actor_list)
         self.accelerator.print(f"(train) mAP of the actor: {mAP:.4f}")
         self.train_loss.append(loss_epoch)
         self.cur_epoch += 1
@@ -336,6 +358,7 @@ class Engine(object):
 
         disable_pbar = self.args.wandb or (not self.accelerator.is_local_main_process)
         log_interval = max(1, self.num_batches // 10)
+        
         with torch.no_grad():
             pbar = tqdm(
                 dataloader,
@@ -346,17 +369,16 @@ class Engine(object):
                 mininterval=0.5,
                 leave=False,
             )
-            for step_idx, data in enumerate(pbar if not disable_pbar else dataloader_train):
+            
+            # SỬA LỖI 1: Đổi dataloader_train -> dataloader
+            for step_idx, data in enumerate(pbar if not disable_pbar else dataloader_val):
                 self.step(data, "val")
+                
+                # SỬA LỖI 2: In console thay vì log lên wandb làm hỏng step
                 if self.args.wandb and step_idx % log_interval == 0:
-                    progress_pct = (step_idx + 1) / self.num_batches * 100
-                    self.accelerator.log(
-                        {
-                            "val/batch_progress_pct": progress_pct,
-                            "val/current_batch": step_idx + 1,
-                            "epoch": self.cur_epoch,
-                        }
-                    )
+                    if self.accelerator.is_local_main_process:
+                        progress_pct = (step_idx + 1) / self.num_batches * 100
+                        print(f"[Validating] {step_idx + 1}/{self.num_batches} ({progress_pct:.1f}%)")
 
             total_loss = self.loss_epoch / float(self.num_batches)
 
@@ -394,7 +416,7 @@ class Engine(object):
 
                 ego_acc = self.correct_ego / max(self.total_ego, 1)
 
-                # Log toàn bộ metrics validation lên WandB
+                # Giờ đây lệnh này sẽ hiển thị đầy đủ và chuẩn xác trên W&B
                 self.accelerator.log(
                     {
                         "val/loss": total_loss,
@@ -424,9 +446,22 @@ class Engine(object):
     def save(self, is_best):
         if is_best and self.accelerator.is_main_process:
             
-            unwrapped_model = self.accelerator.unwrap_model(self.model)
-            save_path = os.path.join(self.logdir, "best_model.pth")
-            self.accelerator.save(unwrapped_model.state_dict(), save_path)
+            unwrapped_model = accelerator.unwrap_model(model)
+
+            for epoch in range(trainer.cur_epoch, args.epochs):
+                # Kiểm tra và kích hoạt đóng băng khi bước vào Stage 2
+                if epoch < args.stage1_epochs:
+                    unwrapped_model.setup_stage(stage=1)
+                    accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 1: Supervised Warmup")
+                else:
+                    unwrapped_model.setup_stage(stage=2)
+                    accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 2: GRPO Fine-tuning (Backbone & Head Frozen)")
+
+                trainer.train(dataloader_train)
+                
+                if epoch % args.val_every == 0 or epoch == args.epochs - 1:
+                    is_best, res = trainer.validate(dataloader_val)
+                    trainer.save(is_best)
             tqdm.write("====== Overwrote best model ======>")
 
 
@@ -476,7 +511,7 @@ if __name__ == "__main__":
 
     dataloader_train = DataLoader(
         train_set,
-        batch_size=6,
+        batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True,
