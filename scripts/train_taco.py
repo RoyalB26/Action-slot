@@ -343,7 +343,7 @@ class Engine(object):
         self.accelerator.print(
             f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
         )
-        check_real_performance(label_actor_list, map_pred_actor_list)
+        # check_real_performance(label_actor_list, map_pred_actor_list)
         self.accelerator.print(f"(train) mAP of the actor: {mAP:.4f}")
         self.train_loss.append(loss_epoch)
         self.cur_epoch += 1
@@ -358,7 +358,7 @@ class Engine(object):
 
         disable_pbar = self.args.wandb or (not self.accelerator.is_local_main_process)
         log_interval = max(1, self.num_batches // 10)
-        
+
         with torch.no_grad():
             pbar = tqdm(
                 dataloader,
@@ -369,16 +369,14 @@ class Engine(object):
                 mininterval=0.5,
                 leave=False,
             )
-            
-            # SỬA LỖI 1: Đổi dataloader_train -> dataloader
+
             for step_idx, data in enumerate(pbar if not disable_pbar else dataloader_val):
                 self.step(data, "val")
-                
-                # SỬA LỖI 2: In console thay vì log lên wandb làm hỏng step
+
                 if self.args.wandb and step_idx % log_interval == 0:
                     if self.accelerator.is_local_main_process:
                         progress_pct = (step_idx + 1) / self.num_batches * 100
-                        print(f"[Validating] {step_idx + 1}/{self.num_batches} ({progress_pct:.1f}%)")
+                        print(f"[Validating] {step_idx + 1}/{self.num_batches} ({progress_pct:.1f}%)", flush=True)
 
             total_loss = self.loss_epoch / float(self.num_batches)
 
@@ -413,10 +411,24 @@ class Engine(object):
                     label_actor_list[:, 56:64],
                     map_pred_actor_list[:, 56:64].astype(np.float32),
                 )
+                # Tính chi tiết từng lớp cho actor
+                mAP_per_class = average_precision_score(
+                    label_actor_list,
+                    map_pred_actor_list.astype(np.float32),
+                    average=None,
+                )
 
                 ego_acc = self.correct_ego / max(self.total_ego, 1)
 
-                # Giờ đây lệnh này sẽ hiển thị đầy đủ và chuẩn xác trên W&B
+                # 1. In ra màn hình console
+                self.accelerator.print(f"\n--- Validation Epoch {self.cur_epoch} Results ---")
+                self.accelerator.print(f"(val) Loss: {total_loss:.4f}")
+                self.accelerator.print(f"(val) mAP: {mAP:.4f}")
+                self.accelerator.print(f"(val) mAP of c: {c_mAP:.4f} | b: {b_mAP:.4f} | p: {p_mAP:.4f}")
+                self.accelerator.print(f"(val) mAP of c+: {group_c_mAP:.4f} | b+: {group_b_mAP:.4f} | p+: {group_p_mAP:.4f}")
+                self.accelerator.print(f"(val) Ego Acc: {ego_acc:.4f}")
+
+                # 2. Log lên WandB
                 self.accelerator.log(
                     {
                         "val/loss": total_loss,
@@ -433,10 +445,63 @@ class Engine(object):
                     step=self.cur_epoch,
                 )
 
+                # 3. Cập nhật best model flag
                 if mAP > self.best_mAP:
                     self.best_mAP = mAP
-                    self.best_log = [...]
+                    self.best_log = [
+                        f"(val) mAP: {mAP}",
+                        f"(val) mAP of the c: {c_mAP}",
+                        f"(val) mAP of the b: {b_mAP}",
+                        f"(val) mAP of the p: {p_mAP}",
+                        f"(val) mAP of the c+: {group_c_mAP}",
+                        f"(val) mAP of the b+: {group_b_mAP}",
+                        f"(val) mAP of the p+: {group_p_mAP}",
+                    ]
                     save_cp = True
+                    self.accelerator.print(f"--> Found new best mAP: {self.best_mAP:.4f}")
+
+                # 4. Ghi chi tiết kết quả vào file mAP.txt
+                with open(os.path.join(self.logdir, "mAP.txt"), "a") as f:
+                    f.write(f"epoch: {self.cur_epoch}\n")
+                    f.write(f"best mAP: {self.best_mAP:.4f}\n")
+                    f.write(f"mAP: {mAP:.4f}\n")
+                    f.write(f"mAP of c: {c_mAP:.4f}\n")
+                    f.write(f"mAP of b: {b_mAP:.4f}\n")
+                    f.write(f"mAP of p: {p_mAP:.4f}\n")
+                    f.write(f"mAP of c+: {group_c_mAP:.4f}\n")
+                    f.write(f"mAP of b+: {group_b_mAP:.4f}\n")
+                    f.write(f"mAP of p+: {group_p_mAP:.4f}\n")
+
+                    f.write("c per class: \n")
+                    for ap in mAP_per_class[:12].tolist():
+                        f.write(f"{ap:.4f} ")
+                    f.write("\n")
+
+                    f.write("b per class: \n")
+                    for ap in mAP_per_class[12:24].tolist():
+                        f.write(f"{ap:.4f} ")
+                    f.write("\n")
+
+                    f.write("c+ per class: \n")
+                    for ap in mAP_per_class[24:36].tolist():
+                        f.write(f"{ap:.4f} ")
+                    f.write("\n")
+
+                    f.write("b+ per class: \n")
+                    for ap in mAP_per_class[36:48].tolist():
+                        f.write(f"{ap:.4f} ")
+                    f.write("\n")
+
+                    f.write("p per class: \n")
+                    for ap in mAP_per_class[48:56].tolist():
+                        f.write(f"{ap:.4f} ")
+                    f.write("\n")
+
+                    f.write("p+ per class: \n")
+                    for ap in mAP_per_class[56:64].tolist():
+                        f.write(f"{ap:.4f} ")
+                    f.write("\n")
+                    f.write("*" * 15 + "\n")
 
                 self.val_loss.append(total_loss)
                 return save_cp, [mAP, total_loss]
