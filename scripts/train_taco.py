@@ -423,7 +423,7 @@ class Engine(object):
 
         self.accelerator.print(f"\n[Epoch {self.cur_epoch}] Total Loss: {loss_epoch:.4f}")
         self.accelerator.print(
-            f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f} | Attn loss: {attn_loss_epoch:.4f}"
+            f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
         )
         
         self.accelerator.print(f"--- RL Stats ---")
