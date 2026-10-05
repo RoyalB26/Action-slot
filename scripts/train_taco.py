@@ -210,6 +210,7 @@ class Engine(object):
                 self.loss_epoch += float(self.accelerator.gather(total_loss).mean().item())
                 self.actor_loss_epoch += float(self.accelerator.gather(actor_loss).mean().item())
                 self.ego_loss_epoch += float(self.accelerator.gather(ego_loss).mean().item())
+                self.attn_loss_epoch += float(self.accelerator.gather(attn_loss).mean().item())
                 self.grpo_loss_epoch += 0.0
 
                 pred_actor_sig = torch.sigmoid(pred_actor)
@@ -272,7 +273,7 @@ class Engine(object):
                     )
                 else:
                     # Giai đoạn sau: Tối ưu GRPO kèm nhánh Ego cố định
-                    total_loss = grpo_loss + self.args.ego_loss_weight * ego_loss
+                    total_loss = 0.2 * actor_loss + grpo_loss + self.args.ego_loss_weight * ego_loss + 0.2 * attn_loss
 
                 self.optimizer.zero_grad()
                 self.accelerator.backward(total_loss)
@@ -286,6 +287,7 @@ class Engine(object):
                 self.actor_loss_epoch += float(self.accelerator.gather(actor_loss).mean().item())
                 self.grpo_loss_epoch += float(self.accelerator.gather(grpo_loss).mean().item())
                 self.ego_loss_epoch += float(self.accelerator.gather(ego_loss).mean().item())
+                self.attn_loss_epoch += float(self.accelerator.gather(attn_loss).mean().item())
                 if metrics:
                     self.rl_metrics = {k: self.rl_metrics[k] + metrics[k] for k in self.rl_metrics}
                 # Gom dự đoán trung bình của G nhóm để tính metric
@@ -401,6 +403,7 @@ class Engine(object):
         loss_epoch = self.loss_epoch / self.num_batches
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
         grpo_loss_epoch = self.grpo_loss_epoch / self.num_batches
+        attn_loss_epoch = self.attn_loss_epoch / self.num_batches
         epoch_metrics = {k: self.rl_metrics[k] / self.num_batches for k in self.rl_metrics}
         # Log metrics lên WandB / Tracker
         self.accelerator.log(
@@ -410,6 +413,7 @@ class Engine(object):
                 "train/grpo_loss": grpo_loss_epoch,
                 "train/ego_loss": self.ego_loss_epoch / self.num_batches,
                 "train/mAP": mAP,
+                "train/attn_loss": attn_loss_epoch,
                 "epoch": self.cur_epoch,
             },
             step=self.cur_epoch,
@@ -419,7 +423,7 @@ class Engine(object):
 
         self.accelerator.print(f"\n[Epoch {self.cur_epoch}] Total Loss: {loss_epoch:.4f}")
         self.accelerator.print(
-            f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
+            f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f} | Attn loss: {attn_loss_epoch:.4f}"
         )
         
         self.accelerator.print(f"--- RL Stats ---")
@@ -771,12 +775,12 @@ if __name__ == "__main__":
             # Lấy đúng raw optimizer bất kể có dùng PCGrad hay không
             raw_opt = trainer.raw_optimizer if hasattr(trainer, "raw_optimizer") else trainer.optimizer
             for param_group in raw_opt.param_groups:
-                param_group['lr'] = 5e-5
+                param_group['lr'] = 2.5e-5
 
             # Tắt scheduler cũ để không bị ghi đè LR cũ
             trainer.scheduler = None  
             
-            accelerator.print(f"\n>>> [Epoch {epoch}] BẮT ĐẦU STAGE 2: Set LR = 5e-5, Tắt Scheduler cũ & Đóng băng Backbone + Head")
+            accelerator.print(f"\n>>> [Epoch {epoch}] BẮT ĐẦU STAGE 2: Set LR = 2.5e-5, Tắt Scheduler cũ & Đóng băng Backbone + Head")
 
         # 3. Các epoch còn lại của Stage 2
         else:
