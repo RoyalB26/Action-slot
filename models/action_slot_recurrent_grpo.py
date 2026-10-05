@@ -278,6 +278,34 @@ class ACTION_SLOT_RECURRENT(nn.Module):
     self.drop = nn.Dropout(p=0.5)
     self.pool = nn.AdaptiveAvgPool3d(output_size=1)
 
+  def setup_stage(self, stage=1):
+        """
+        stage 1: Supervised Warmup (Học toàn bộ bằng Actor Supervised Loss, không bật GRPO)
+        stage 2: GRPO Fine-tuning (Đóng băng Backbone và Classifier Head, chỉ tối ưu Slot Policy qua GRPO)
+        """
+        if stage == 1:
+            # Mở khóa toàn bộ mô hình để học đặc trưng cơ bản
+            for p in self.parameters():
+                p.requires_grad = True
+
+        elif stage == 2:
+            # 1. Đóng băng Backbone và 3D Conv (giữ nguyên feature trích xuất)
+            for p in self.resnet.parameters():
+                p.requires_grad = False
+            for p in self.conv3d.parameters():
+                p.requires_grad = False
+            if hasattr(self, 'conv3d_ego'):
+                for p in self.conv3d_ego.parameters():
+                    p.requires_grad = False
+
+            # 2. Đóng băng Head phân loại (Classifier) để Head đóng vai trò Reward Evaluator cố định
+            for p in self.head.parameters():
+                p.requires_grad = False
+
+            # 3. Mở khóa Slot Attention & GRU để tối ưu hóa quỹ đạo phân bổ slot
+            for p in self.slot_attention.parameters():
+                p.requires_grad = True
+
   def forward(self, x, num_groups=None):
     """x: Danh sách T tensors từ dataloader [T, B, C, H, W]
 

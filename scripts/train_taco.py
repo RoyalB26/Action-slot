@@ -567,25 +567,14 @@ class Engine(object):
                 return False, [0.0, total_loss]
 
     def save(self, is_best):
-        if is_best and self.accelerator.is_main_process:
+
+       if is_best and self.accelerator.is_main_process:
             
-            unwrapped_model = accelerator.unwrap_model(model)
-
-            for epoch in range(trainer.cur_epoch, args.epochs):
-                # Kiểm tra và kích hoạt đóng băng khi bước vào Stage 2
-                if epoch < args.stage1_epochs:
-                    unwrapped_model.setup_stage(stage=1)
-                    accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 1: Supervised Warmup")
-                else:
-                    unwrapped_model.setup_stage(stage=2)
-                    accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 2: GRPO Fine-tuning (Backbone & Head Frozen)")
-
-                trainer.train(dataloader_train)
-                
-                if epoch % args.val_every == 0 or epoch == args.epochs - 1:
-                    is_best, res = trainer.validate(dataloader_val)
-                    trainer.save(is_best)
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            save_path = os.path.join(self.logdir, "best_model.pth")
+            self.accelerator.save(unwrapped_model.state_dict(), save_path)
             tqdm.write("====== Overwrote best model ======>")
+
 
 
 if __name__ == "__main__":
@@ -682,13 +671,22 @@ if __name__ == "__main__":
     accelerator.print(f"Checkpoint path: {abs_logdir}")
 
     result_list = []
+    unwrapped_model = accelerator.unwrap_model(model)
+
     for epoch in range(trainer.cur_epoch, args.epochs):
+        # Kiểm tra và kích hoạt đóng băng khi bước vào Stage 2
+        if epoch < args.stage1_epochs:
+            unwrapped_model.setup_stage(stage=1)
+            accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 1: Supervised Warmup")
+        else:
+            unwrapped_model.setup_stage(stage=2)
+            accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 2: GRPO Fine-tuning (Backbone & Head Frozen)")
+
         trainer.train(dataloader_train)
+        
         if epoch % args.val_every == 0 or epoch == args.epochs - 1:
             is_best, res = trainer.validate(dataloader_val)
             trainer.save(is_best)
-            if accelerator.is_main_process:
-                result_list.append(res)
 
     if accelerator.is_main_process:
         print("********** Best model **********")
