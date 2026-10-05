@@ -139,285 +139,255 @@ class RecurrentChunkSlotAttention(nn.Module):
 # -------------------------------------------------------------
 # 3. ACTION_SLOT_RECURRENT ĐẦY ĐỦ VÀ CHUẨN HOÁ
 # -------------------------------------------------------------
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.models as models
+from torch.utils.checkpoint import checkpoint
+from classifier import Head, Allocated_Head
+from pytorchvideo.models.hub import i3d_r50, csn_r101, mvit_base_16x4
+import r50
+
+
 class ACTION_SLOT_RECURRENT(nn.Module):
-
-  def __init__(
-      self,
-      args,
-      num_ego_class,
-      num_actor_class,
-      num_slots=21,
-      chunk_size=4,
-      num_groups=4,
-  ):
-    super().__init__()
-    self.args = args
-    self.chunk_size = chunk_size
-    self.num_groups = num_groups
-    self.num_ego_class = num_ego_class
-    self.num_actor_class = num_actor_class
-    self.ego_c = 128
-    self.hidden_dim = args.channel
-    self.hidden_dim2 = args.channel
-    self.slot_dim = args.channel
-    self.num_slots = num_slots
-
-    if (
-        args.dataset == "nuscenes"
-        and args.pretrain == "oats"
-        and not "nuscenes" in args.cp
+    def __init__(
+        self,
+        args,
+        num_ego_class,
+        num_actor_class,
+        num_slots=21,
+        chunk_size=4,
+        num_groups=4,
+        use_checkpoint=False,
     ):
-      self.num_actor_class = 35
-    if args.dataset == "nuscenes" and args.pretrain == "oats":
-      self.num_slots = 35
-    if args.dataset == "oats" and args.pretrain == "taco":
-      self.num_slots = 64
+        super().__init__()
+        self.args = args
+        self.chunk_size = chunk_size
+        self.num_groups = num_groups
+        self.num_ego_class = num_ego_class
+        self.num_actor_class = num_actor_class
+        self.ego_c = 128
+        self.hidden_dim = args.channel
+        self.hidden_dim2 = args.channel
+        self.slot_dim = args.channel
+        self.num_slots = num_slots
+        self.use_checkpoint = use_checkpoint
 
-    # Backbone Setup
-    self.resnet = i3d_r50(True)
-    if args.backbone == "r50":
-      self.resnet = r50.R50()
-      self.in_c = 2048
-      if args.dataset == "taco":
-        self.resolution = (8, 24)
-      elif args.dataset == "oats":
-        self.resolution = (7, 7)
-    elif args.backbone == "i3d":
-      self.resnet = self.resnet.blocks[:-1]
-      self.in_c = 2048
-      if args.dataset == "taco":
-        self.resolution = (8, 24)
-      elif args.dataset == "oats":
-        self.resolution = (7, 7)
-    elif args.backbone == "x3d":
-      self.resnet = torch.hub.load(
-          "facebookresearch/pytorchvideo:main", "x3d_m", pretrained=True
-      )
-      self.resnet = self.resnet.blocks[:-1]
-      self.in_c = 192
-      self.resolution = (
-          (7, 7)
-          if (args.dataset == "oats" or args.pretrain == "oats")
-          and args.pretrain != "taco"
-          else (8, 24)
-      )
-    elif args.backbone == "slowfast":
-      self.resnet = torch.hub.load(
-          "facebookresearch/pytorchvideo:main", "slowfast_r50", pretrained=True
-      )
-      self.resnet = self.resnet.blocks[:-2]
-      self.path_pool = nn.AdaptiveAvgPool3d((4, 8, 24))
-      self.in_c = 2304
-      self.resolution = (7, 7) if args.dataset == "oats" else (8, 24)
+        if args.dataset == "nuscenes" and args.pretrain == "oats" and not "nuscenes" in args.cp:
+            self.num_actor_class = 35
+        if args.dataset == "nuscenes" and args.pretrain == "oats":
+            self.num_slots = 35
+        if args.dataset == "oats" and args.pretrain == "taco":
+            self.num_slots = 64
 
-    # Resolution cho chunk 4 frames
-    self.chunk_resolution = [chunk_size, self.resolution[0], self.resolution[1]]
+        # Backbone Setup
+        self.resnet = i3d_r50(True)
+        if args.backbone == "r50":
+            self.resnet = r50.R50()
+            self.in_c = 2048
+            if args.dataset == "taco":
+                self.resolution = (8, 24)
+            elif args.dataset == "oats":
+                self.resolution = (7, 7)
+        elif args.backbone == "i3d":
+            self.resnet = self.resnet.blocks[:-1]
+            self.in_c = 2048
+            if args.dataset == "taco":
+                self.resolution = (8, 24)
+            elif args.dataset == "oats":
+                self.resolution = (7, 7)
+        elif args.backbone == "x3d":
+            self.resnet = torch.hub.load("facebookresearch/pytorchvideo:main", "x3d_m", pretrained=True)
+            self.resnet = self.resnet.blocks[:-1]
+            self.in_c = 192
+            self.resolution = (7, 7) if (args.dataset == "oats" or args.pretrain == "oats") and args.pretrain != "taco" else (8, 24)
+        elif args.backbone == "slowfast":
+            self.resnet = torch.hub.load("facebookresearch/pytorchvideo:main", "slowfast_r50", pretrained=True)
+            self.resnet = self.resnet.blocks[:-2]
+            self.path_pool = nn.AdaptiveAvgPool3d((4, 8, 24))
+            self.in_c = 2304
+            self.resolution = (7, 7) if args.dataset == "oats" else (8, 24)
 
-    # Head
-    if args.allocated_slot:
-      self.head = Allocated_Head(
-          self.slot_dim, num_ego_class, self.num_actor_class, self.ego_c
-      )
-    else:
-      self.head = Head(
-          self.slot_dim, num_ego_class, self.num_actor_class + 1, self.ego_c
-      )
+        # Resolution cho chunk 4 frames
+        self.chunk_resolution = [chunk_size, self.resolution[0], self.resolution[1]]
 
-    # Conv 3D
-    if self.num_ego_class != 0:
-      self.conv3d_ego = nn.Sequential(
-          nn.ReLU(),
-          nn.BatchNorm3d(self.in_c),
-          nn.Conv3d(self.in_c, self.ego_c, (1, 1, 1), stride=1),
-      )
+        # Head Classifier
+        if args.allocated_slot:
+            self.head = Allocated_Head(self.slot_dim, num_ego_class, self.num_actor_class, self.ego_c)
+        else:
+            self.head = Head(self.slot_dim, num_ego_class, self.num_actor_class + 1, self.ego_c)
 
-    if args.backbone == "r50":
-      self.conv3d = nn.Sequential(
-          nn.ReLU(),
-          nn.BatchNorm3d(self.in_c),
-          nn.Conv3d(self.in_c, self.in_c // 2, (1, 1, 1), stride=1),
-          nn.ReLU(),
-          nn.BatchNorm3d(self.in_c // 2),
-          nn.Conv3d(
-              self.in_c // 2,
-              self.in_c // 2,
-              (3, 3, 3),
-              stride=1,
-              padding="same",
-          ),
-          nn.ReLU(),
-          nn.BatchNorm3d(self.in_c // 2),
-          nn.Conv3d(
-              self.in_c // 2,
-              self.in_c // 2,
-              (3, 3, 3),
-              stride=1,
-              padding="same",
-          ),
-          nn.ReLU(),
-          nn.BatchNorm3d(self.in_c // 2),
-          nn.Conv3d(self.in_c // 2, self.hidden_dim2, (1, 1, 1), stride=1),
-          nn.ReLU(),
-      )
-    else:
-      self.conv3d = nn.Sequential(
-          nn.ReLU(),
-          nn.BatchNorm3d(self.in_c),
-          nn.Conv3d(self.in_c, self.hidden_dim2, (1, 1, 1), stride=1),
-          nn.ReLU(),
-      )
+        # Ego 3D Convolution
+        if self.num_ego_class != 0:
+            self.conv3d_ego = nn.Sequential(
+                nn.ReLU(),
+                nn.BatchNorm3d(self.in_c),
+                nn.Conv3d(self.in_c, self.ego_c, (1, 1, 1), stride=1),
+            )
 
-    self.slot_attention = RecurrentChunkSlotAttention(
-        num_slots=self.num_slots,
-        dim=self.slot_dim,
-        num_actor_class=self.num_actor_class,
-        chunk_resolution=self.chunk_resolution,
-        allocated_slot=args.allocated_slot,
-    )
+        # Feature Map 3D Convolution
+        if args.backbone == "r50":
+            self.conv3d = nn.Sequential(
+                nn.ReLU(),
+                nn.BatchNorm3d(self.in_c),
+                nn.Conv3d(self.in_c, self.in_c // 2, (1, 1, 1), stride=1),
+                nn.ReLU(),
+                nn.BatchNorm3d(self.in_c // 2),
+                nn.Conv3d(self.in_c // 2, self.in_c // 2, (3, 3, 3), stride=1, padding="same"),
+                nn.ReLU(),
+                nn.BatchNorm3d(self.in_c // 2),
+                nn.Conv3d(self.in_c // 2, self.in_c // 2, (3, 3, 3), stride=1, padding="same"),
+                nn.ReLU(),
+                nn.BatchNorm3d(self.in_c // 2),
+                nn.Conv3d(self.in_c // 2, self.hidden_dim2, (1, 1, 1), stride=1),
+                nn.ReLU(),
+            )
+        else:
+            self.conv3d = nn.Sequential(
+                nn.ReLU(),
+                nn.BatchNorm3d(self.in_c),
+                nn.Conv3d(self.in_c, self.hidden_dim2, (1, 1, 1), stride=1),
+                nn.ReLU(),
+            )
 
-    self.drop = nn.Dropout(p=0.5)
-    self.pool = nn.AdaptiveAvgPool3d(output_size=1)
+        self.slot_attention = RecurrentChunkSlotAttention(
+            num_slots=self.num_slots,
+            dim=self.slot_dim,
+            num_actor_class=self.num_actor_class,
+            chunk_resolution=self.chunk_resolution,
+            allocated_slot=args.allocated_slot,
+        )
 
-  def setup_stage(self, stage=1):
+        self.drop = nn.Dropout(p=0.5)
+        self.pool = nn.AdaptiveAvgPool3d(output_size=1)
+
+    def setup_stage(self, stage=1):
         """
-        stage 1: Supervised Warmup (Học toàn bộ bằng Actor Supervised Loss, không bật GRPO)
-        stage 2: GRPO Fine-tuning (Đóng băng Backbone và Classifier Head, chỉ tối ưu Slot Policy qua GRPO)
+        stage 1: Supervised Warmup (Mở toàn bộ tham số để học)
+        stage 2: GRPO Fine-tuning (Đóng băng Backbone & Head, chỉ cập nhật Slot Attention)
         """
         if stage == 1:
-            # Mở khóa toàn bộ mô hình để học đặc trưng cơ bản
             for p in self.parameters():
                 p.requires_grad = True
-
         elif stage == 2:
-            # 1. Đóng băng Backbone và 3D Conv (giữ nguyên feature trích xuất)
             for p in self.resnet.parameters():
                 p.requires_grad = False
             for p in self.conv3d.parameters():
                 p.requires_grad = False
-            if hasattr(self, 'conv3d_ego'):
+            if hasattr(self, "conv3d_ego"):
                 for p in self.conv3d_ego.parameters():
                     p.requires_grad = False
-
-            # 2. Đóng băng Head phân loại (Classifier) để Head đóng vai trò Reward Evaluator cố định
             for p in self.head.parameters():
                 p.requires_grad = False
-
-            # 3. Mở khóa Slot Attention & GRU để tối ưu hóa quỹ đạo phân bổ slot
             for p in self.slot_attention.parameters():
                 p.requires_grad = True
 
-  def forward(self, x, num_groups=None):
-    """x: Danh sách T tensors từ dataloader [T, B, C, H, W]
+    def forward(self, x, num_groups=None):
+        if num_groups is None:
+            num_groups = self.num_groups if self.training else 1
 
-    num_groups: Số nhóm G (GRPO Rollouts). Khi Val/Test sẽ mặc định = 1.
-    """
-    if num_groups is None:
-      num_groups = self.num_groups if self.training else 1
+        seq_len = len(x)
+        batch_size = x[0].shape[0]
+        height, width = x[0].shape[2], x[0].shape[3]
 
-    seq_len = len(x)
-    batch_size = x[0].shape[0]
-    height, width = x[0].shape[2], x[0].shape[3]
+        # --- 1. TRÍCH XUẤT FEATURE QUA BACKBONE ---
+        if self.args.backbone == "r50":
+            x = torch.stack(x, dim=0)  # [T, B, C, H, W]
+            x = torch.reshape(x, (seq_len * batch_size, 3, height, width))
+            x = self.resnet(x)
+            _, c, h, w = x.shape
+            x = torch.reshape(x, (self.args.seq_len, batch_size, c, h, w))
+            x = x.permute(1, 2, 0, 3, 4)  # [B, C, T, H, W]
+        elif self.args.backbone == "slowfast":
+            slow_x = [x[i] for i in range(0, seq_len, 4)]
+            x = torch.stack(x, dim=0).permute((1, 2, 0, 3, 4))
+            slow_x = torch.stack(slow_x, dim=0).permute((1, 2, 0, 3, 4))
+            x = [slow_x, x]
+            for i in range(len(self.resnet)):
+                x = self.resnet[i](x)
+            x[1] = self.path_pool(x[1])
+            x = torch.cat((x[0], x[1]), dim=1)
+        else:
+            x = torch.stack(x, dim=0).permute((1, 2, 0, 3, 4))
+            for i in range(len(self.resnet)):
+                x = self.resnet[i](x)
 
-    # --- 1. TRÍCH XUẤT FEATURE QUA BACKBONE ---
-    if self.args.backbone == "r50":
-      x = torch.stack(x, dim=0)  # [T, B, C, H, W]
-      x = torch.reshape(x, (seq_len * batch_size, 3, height, width))
-      x = self.resnet(x)
-      _, c, h, w = x.shape
-      x = torch.reshape(x, (self.args.seq_len, batch_size, c, h, w))
-      x = x.permute(1, 2, 0, 3, 4)  # [B, C, T, H, W]
+        x = self.drop(x)
 
-    elif self.args.backbone == "slowfast":
-      slow_x = [x[i] for i in range(0, seq_len, 4)]
-      x = torch.stack(x, dim=0).permute((1, 2, 0, 3, 4))
-      slow_x = torch.stack(slow_x, dim=0).permute((1, 2, 0, 3, 4))
-      x = [slow_x, x]
-      for i in range(len(self.resnet)):
-        x = self.resnet[i](x)
-      x[1] = self.path_pool(x[1])
-      x = torch.cat((x[0], x[1]), dim=1)
+        # Ego Feature
+        ego_x = None
+        if self.num_ego_class != 0:
+            ego_feat = self.conv3d_ego(x)
+            ego_feat = self.pool(ego_feat)
+            ego_x = torch.reshape(ego_feat, (batch_size, self.ego_c))
 
-    else:
-      x = torch.stack(x, dim=0).permute((1, 2, 0, 3, 4))
-      for i in range(len(self.resnet)):
-        x = self.resnet[i](x)
+        # 3D Feature Map
+        x = self.conv3d(x)
+        x = x.permute((0, 2, 3, 4, 1))  # [B, T_feat, H_feat, W_feat, C]
+        B, T_feat, H_feat, W_feat, C = x.shape
 
-    x = self.drop(x)
+        assert T_feat % self.chunk_size == 0, f"T_feat ({T_feat}) phải chia hết cho chunk_size ({self.chunk_size})"
 
-    # Ego Feature
-    ego_x = None
-    if self.num_ego_class != 0:
-      ego_feat = self.conv3d_ego(x)
-      ego_feat = self.pool(ego_feat)
-      ego_x = torch.reshape(ego_feat, (batch_size, self.ego_c))
+        # --- 2. CHIA CHUNKS 4 FRAMES & MỞ RỘNG G NHÓM (DÙNG EXPAND TRÁNH OOM) ---
+        chunks = torch.split(x, self.chunk_size, dim=1)
 
-    # Conv 3D Feature Map
-    x = self.conv3d(x)  # [B, hidden_dim2, T_feat, H_feat, W_feat]
-    x = x.permute((0, 2, 3, 4, 1))  # [B, T_feat, H_feat, W_feat, C]
-    B, T_feat, H_feat, W_feat, C = x.shape
-
-    assert (
-        T_feat % self.chunk_size == 0
-    ), f"T_feat ({T_feat}) phải chia hết cho chunk_size ({self.chunk_size})"
-
-    # --- 2. CHIA CHUNKS 4 FRAMES & MỞ RỘNG G NHÓM ---
-    chunks = torch.split(x, self.chunk_size, dim=1)
-    expanded_chunks = [
-        chunk.unsqueeze(1)
-        .repeat(1, num_groups, 1, 1, 1, 1)
-        .view(B * num_groups, self.chunk_size, H_feat, W_feat, C)
-        for chunk in chunks
-    ]
-
-    # Khởi tạo S_0 cho G nhóm
-    slots_t, initial_log_probs = self.slot_attention.sample_initial_slots(
-        batch_size=B, num_groups=num_groups
-    )
-
-    attns_list = []
-    # --- 3. RECURRENT ATTENTION TUẦN TỰ ---
-    for f_k in expanded_chunks:
-      slots_t, attn = self.slot_attention.forward_chunk(slots_t, f_k)
-      attns_list.append(attn)
-
-    # Cắt slot theo actor class sau khi hoàn thành toàn bộ chu kỳ
-    if self.args.allocated_slot:
-      final_slots = slots_t[:, : self.num_actor_class, :]
-    else:
-      final_slots = slots_t[:, : self.num_slots, :]
-
-    final_slots = self.drop(final_slots)
-
-    # --- 4. HEAD CLASSIFICATION TƯƠNG THÍCH VỚI PIPELINE ---
-    if self.num_ego_class != 0:
-      ego_x = self.drop(ego_x)
-      # Mở rộng ego_x nếu có G nhóm để tính toán qua Head
-      if num_groups > 1:
-        ego_x_exp = (
-            ego_x.unsqueeze(1)
-            .repeat(1, num_groups, 1)
-            .view(B * num_groups, self.ego_c)
+        # Khởi tạo S_0 cho G nhóm
+        slots_t, initial_log_probs = self.slot_attention.sample_initial_slots(
+            batch_size=B, num_groups=num_groups
         )
-        pred_ego, pred_actor = self.head(final_slots, ego_x_exp)
-      else:
-        pred_ego, pred_actor = self.head(final_slots, ego_x)
-    else:
-      pred_ego = None
-      pred_actor = self.head(final_slots)
 
-    # Reshape về lại cấu trúc batch chuẩn [B, G, num_classes] nếu num_groups > 1
-    if num_groups > 1:
-      pred_actor = pred_actor.view(B, num_groups, -1)
-      initial_log_probs = initial_log_probs.view(B, num_groups)
-      if pred_ego is not None:
-        pred_ego = pred_ego.view(B, num_groups, -1).mean(
-            dim=1
-        )  # Ego dùng chung đại diện video
-    else:
-      pred_actor = pred_actor.view(B, -1)
-      initial_log_probs = initial_log_probs.view(B)
+        attns_list = []
+        # --- 3. RECURRENT ATTENTION TUẦN TỰ (TIẾT KIỆM BỘ NHỚ) ---
+        for chunk in chunks:
+            # Dùng expand thay vì repeat để chia sẻ view bộ nhớ (tránh OOM)
+            chunk_expanded = (
+                chunk.unsqueeze(1)
+                .expand(-1, num_groups, -1, -1, -1, -1)
+                .reshape(B * num_groups, self.chunk_size, H_feat, W_feat, C)
+            )
 
-    # Nối attention masks của các chunks theo trục thời gian
-    attn_masks = torch.cat(attns_list, dim=-1)
+            if self.use_checkpoint and self.training:
+                slots_t, attn = checkpoint(self.slot_attention.forward_chunk, slots_t, chunk_expanded)
+            else:
+                slots_t, attn = self.slot_attention.forward_chunk(slots_t, chunk_expanded)
 
-    return pred_ego, pred_actor, attn_masks, initial_log_probs
+            attns_list.append(attn)
+
+        # Cắt slot theo actor class sau khi hoàn tất chuỗi recurrent
+        if self.args.allocated_slot:
+            final_slots = slots_t[:, : self.num_actor_class, :]
+        else:
+            final_slots = slots_t[:, : self.num_slots, :]
+
+        final_slots = self.drop(final_slots)
+
+        # --- 4. HEAD CLASSIFICATION TƯƠNG THÍCH VỚI PIPELINE ---
+        if self.num_ego_class != 0:
+            ego_x = self.drop(ego_x)
+            if num_groups > 1:
+                # Dùng expand thay vì repeat cho ego feature
+                ego_x_exp = (
+                    ego_x.unsqueeze(1)
+                    .expand(-1, num_groups, -1)
+                    .reshape(B * num_groups, self.ego_c)
+                )
+                pred_ego, pred_actor = self.head(final_slots, ego_x_exp)
+            else:
+                pred_ego, pred_actor = self.head(final_slots, ego_x)
+        else:
+            pred_ego = None
+            pred_actor = self.head(final_slots)
+
+        # Đưa về shape chuẩn theo cấu hình num_groups
+        if num_groups > 1:
+            pred_actor = pred_actor.view(B, num_groups, -1)
+            initial_log_probs = initial_log_probs.view(B, num_groups)
+            if pred_ego is not None:
+                pred_ego = pred_ego.view(B, num_groups, -1).mean(dim=1)
+        else:
+            pred_actor = pred_actor.view(B, -1)
+            initial_log_probs = initial_log_probs.view(B)
+
+        attn_masks = torch.cat(attns_list, dim=-1)
+
+        return pred_ego, pred_actor, attn_masks, initial_log_probs
