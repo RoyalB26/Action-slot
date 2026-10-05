@@ -132,7 +132,7 @@ class Engine(object):
             args, num_actor_class, attention_res
         ).to(self.accelerator.device)
 
-        self.cur_epoch = 0
+        self.cur_epoch = self.args.start_epoch
         self.train_loss = []
         self.val_loss = []
         self.best_mAP = 1e-5
@@ -159,15 +159,14 @@ class Engine(object):
         seq_len = self.args.seq_len
         inputs = [video_in[i].to(dtype=torch.float32) for i in range(seq_len)]
 
-        # Xác định giai đoạn hiện tại (Stage 1 hay Stage 2)
-        stage = 1 if self.cur_epoch < getattr(self.args, "stage1_epochs", 30) else 2
+        stage1_epochs = getattr(self.args, "stage1_epochs", 30)
+        stage = 1 if self.cur_epoch < stage1_epochs else 2
 
         if mode == "train":
             # =================================================================
             # STAGE 1: SUPERVISED WARMUP (TẮT GRPO, CHẠY G=1)
             # =================================================================
             if stage == 1:
-                # Forward 1 lần duy nhất với G=1
                 pred_ego, pred_actor, attn, _ = self.model(inputs, num_groups=1)
                 if pred_actor.dim() == 3 and pred_actor.shape[1] == 1:
                     pred_actor = pred_actor.squeeze(1)
@@ -198,13 +197,12 @@ class Engine(object):
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                # Logging loss
+                # Logging
                 self.loss_epoch += float(self.accelerator.gather(total_loss).mean().item())
                 self.actor_loss_epoch += float(self.accelerator.gather(actor_loss).mean().item())
                 self.ego_loss_epoch += float(self.accelerator.gather(ego_loss).mean().item())
                 self.grpo_loss_epoch += 0.0
 
-                # Metric Actor
                 pred_actor_sig = torch.sigmoid(pred_actor)
                 self.map_pred_actor_list.append(
                     self.accelerator.gather_for_metrics(pred_actor_sig).detach().cpu().numpy()
@@ -213,7 +211,6 @@ class Engine(object):
                     self.accelerator.gather_for_metrics(batch["actor"]).detach().cpu().numpy()
                 )
 
-                # Metric Ego
                 if pred_ego is not None:
                     target_ego = batch["ego"].view(-1)
                     _, pred_ego_idx = torch.max(pred_ego.data, dim=1)
@@ -223,7 +220,7 @@ class Engine(object):
                     self.total_ego += self.accelerator.gather(total).sum().item()
 
             # =================================================================
-            # STAGE 2: GRPO FINE-TUNING (HỌC BẰNG GRPO LOSS + SUPERVISED EGO)
+            # STAGE 2: GRPO FINE-TUNING (CHUYỂN TIẾP MỎ NEO AN TOÀN)
             # =================================================================
             else:
                 # 1. Rollout pi_old lấy G nhóm trajectories
@@ -247,14 +244,25 @@ class Engine(object):
                 loss_dict = self.criterion(pred_dict, batch, validate=False)
 
                 grpo_loss = loss_dict["grpo"]
+                actor_loss = loss_dict["actor"]
+                attn_loss = loss_dict["attn"]["attn_loss"]
                 ego_loss = (
                     loss_dict["ego"]
                     if loss_dict["ego"] is not None
                     else torch.tensor(0.0, device=self.accelerator.device)
                 )
 
-                # Duy trì ego_loss để nhánh ego không bị trôi/chết gradient ở Stage 2
-                total_loss = grpo_loss + self.args.ego_loss_weight * ego_loss
+                # 4 Epochs chuyển tiếp (Transition): Giữ Actor Loss làm mỏ neo tránh vỡ chính sách
+                if self.cur_epoch < stage1_epochs + 4:
+                    total_loss = (
+                        actor_loss 
+                        + self.args.ego_loss_weight * ego_loss 
+                        + attn_loss 
+                        + 0.05 * grpo_loss
+                    )
+                else:
+                    # Giai đoạn sau: Tối ưu GRPO kèm nhánh Ego cố định
+                    total_loss = grpo_loss + self.args.ego_loss_weight * ego_loss
 
                 self.optimizer.zero_grad()
                 self.accelerator.backward(total_loss)
@@ -263,13 +271,13 @@ class Engine(object):
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                # Logging loss
+                # Logging Stage 2
                 self.loss_epoch += float(self.accelerator.gather(total_loss).mean().item())
-                self.actor_loss_epoch += float(self.accelerator.gather(loss_dict["actor"]).mean().item())
-                self.ego_loss_epoch += float(self.accelerator.gather(ego_loss).mean().item())
+                self.actor_loss_epoch += float(self.accelerator.gather(actor_loss).mean().item())
                 self.grpo_loss_epoch += float(self.accelerator.gather(grpo_loss).mean().item())
+                self.ego_loss_epoch += float(self.accelerator.gather(ego_loss).mean().item())
 
-                # Metric Actor (lấy trung bình qua G nhóm để đo mAP train)
+                # Gom dự đoán trung bình của G nhóm để tính metric
                 pred_actor_mean = torch.sigmoid(pred_actor.mean(dim=1))
                 self.map_pred_actor_list.append(
                     self.accelerator.gather_for_metrics(pred_actor_mean).detach().cpu().numpy()
@@ -278,7 +286,6 @@ class Engine(object):
                     self.accelerator.gather_for_metrics(batch["actor"]).detach().cpu().numpy()
                 )
 
-                # Metric Ego
                 if pred_ego is not None:
                     target_ego = batch["ego"].view(-1)
                     _, pred_ego_idx = torch.max(pred_ego.data, dim=1)
@@ -576,7 +583,6 @@ class Engine(object):
             tqdm.write("====== Overwrote best model ======>")
 
 
-
 if __name__ == "__main__":
     args, logdir = parser()
     print(args)
@@ -588,7 +594,7 @@ if __name__ == "__main__":
 
     os.makedirs(abs_logdir, exist_ok=True)
 
-    # Khởi tạo Accelerator với logging TensorBoard
+    # Khởi tạo Accelerator với logging TensorBoard/W&B
     log_tracker = "wandb" if args.wandb else "tensorboard"
 
     accelerator = Accelerator(
@@ -601,13 +607,13 @@ if __name__ == "__main__":
         if args.wandb:
             init_kwargs = {
                 "wandb": {
-                    "name": os.path.basename(abs_logdir),  # Tên run hiển thị trên W&B
-                    "config": vars(args)                   # Lưu toàn bộ hyperparameter
+                    "name": os.path.basename(abs_logdir),
+                    "config": vars(args),
                 }
             }
         accelerator.init_trackers(
-            project_name=os.getenv("WANDB_PROJECT", "taco_experiments"), 
-            init_kwargs=init_kwargs
+            project_name=os.getenv("WANDB_PROJECT", "taco_experiments"),
+            init_kwargs=init_kwargs,
         )
 
     args.device = accelerator.device
@@ -617,9 +623,9 @@ if __name__ == "__main__":
     num_actor_class = 64
 
     accelerator.print("initialize train set")
-    train_set = TACO(args=args, split="train", accelerator= accelerator)
+    train_set = TACO(args=args, split="train", accelerator=accelerator)
     accelerator.print("initialize val set")
-    val_set = TACO(args=args, split="val", accelerator= accelerator)
+    val_set = TACO(args=args, split="val", accelerator=accelerator)
 
     dataloader_train = DataLoader(
         train_set,
@@ -668,18 +674,92 @@ if __name__ == "__main__":
         logdir=abs_logdir,
     )
 
-    accelerator.print(f"Checkpoint path: {abs_logdir}")
+    # =========================================================================
+    # NẠP CHECKPOINT (RESUME HOẶC KHỞI ĐỘNG STAGE 2 TỪ CHECKPOINT STAGE 1)
+    # =========================================================================
+    checkpoint_path = getattr(args, "checkpoint", None) or getattr(args, "resume", None)
+    
+    if checkpoint_path and os.path.isfile(checkpoint_path):
+        accelerator.print(f"\n>>> Đang nạp checkpoint từ: {checkpoint_path}")
+        # Map về device hiện tại thông qua accelerator
+        ckpt = torch.load(checkpoint_path, map_location=accelerator.device)
+
+        # 1. Trích xuất state_dict của model
+        if "model_state_dict" in ckpt:
+            state_dict = ckpt["model_state_dict"]
+        elif "state_dict" in ckpt:
+            state_dict = ckpt["state_dict"]
+        elif "model" in ckpt:
+            state_dict = ckpt["model"]
+        else:
+            state_dict = ckpt
+
+        # Nạp weights vào model đã unwrap
+        unwrapped_model = accelerator.unwrap_model(model)
+        missing_keys, unexpected_keys = unwrapped_model.load_state_dict(state_dict, strict=False)
+        accelerator.print(f"    Missing keys: {len(missing_keys)} | Unexpected keys: {len(unexpected_keys)}")
+
+        # 2. Xử lý logic khôi phục Optimizer / Epoch:
+        # Kiểm tra xem đây là nạp để chạy Stage 2 luôn hay resume bình thường
+        start_at_stage2 = getattr(args, "start_stage2", False) or getattr(args, "stage1_epochs", 30) == 0
+
+        if start_at_stage2:
+            accelerator.print(">>> Nạp checkpoint Stage 1 để vào thẳng STAGE 2: Khởi tạo lại LR = 1e-5 & Reset Scheduler")
+            trainer.cur_epoch = args.stage1_epochs  # Đưa thẳng con trỏ epoch về mốc Stage 2
+            trainer.best_mAP = ckpt.get("best_mAP", ckpt.get("mAP", 1e-5))
+
+            # Set LR = 1e-5 cho toàn bộ param groups
+            raw_opt = trainer.raw_optimizer if hasattr(trainer, "raw_optimizer") else trainer.optimizer
+            for param_group in raw_opt.param_groups:
+                param_group['lr'] = 1e-5
+            trainer.scheduler = None  # Không dùng scheduler cũ
+        else:
+            # Resume tiếp tục quá trình bình thường
+            if "epoch" in ckpt:
+                trainer.cur_epoch = ckpt["epoch"] + 1
+                accelerator.print(f"    Khôi phục tiếp tục từ epoch: {trainer.cur_epoch}")
+            if "best_mAP" in ckpt:
+                trainer.best_mAP = ckpt["best_mAP"]
+            if "optimizer_state_dict" in ckpt and optimizer is not None:
+                try:
+                    raw_opt = trainer.raw_optimizer if hasattr(trainer, "raw_optimizer") else trainer.optimizer
+                    raw_opt.load_state_dict(ckpt["optimizer_state_dict"])
+                    accelerator.print("    Đã nạp lại trạng thái Optimizer thành công.")
+                except Exception as e:
+                    accelerator.print(f"    Cảnh báo: Không thể nạp optimizer_state_dict ({e}), giữ optimizer mới.")
+            if "scheduler_state_dict" in ckpt and trainer.scheduler is not None:
+                try:
+                    trainer.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+                except Exception:
+                    pass
+
+    accelerator.print(f"Checkpoint path lưu logs: {abs_logdir}")
 
     result_list = []
     unwrapped_model = accelerator.unwrap_model(model)
 
     for epoch in range(trainer.cur_epoch, args.epochs):
-        # Kiểm tra và kích hoạt đóng băng khi bước vào Stage 2
+        # 1. Trạng thái Stage 1
         if epoch < args.stage1_epochs:
             unwrapped_model.setup_stage(stage=1)
             accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 1: Supervised Warmup")
-        else:
+
+        # 2. Bước chuyển giao sang Stage 2 (Chỉ thực hiện thiết lập 1 lần ở epoch đầu tiên của Stage 2)
+        elif epoch == args.stage1_epochs:
             unwrapped_model.setup_stage(stage=2)
+            
+            # Lấy đúng raw optimizer bất kể có dùng PCGrad hay không
+            raw_opt = trainer.raw_optimizer if hasattr(trainer, "raw_optimizer") else trainer.optimizer
+            for param_group in raw_opt.param_groups:
+                param_group['lr'] = 1e-5
+
+            # Tắt scheduler cũ để không bị ghi đè LR cũ
+            trainer.scheduler = None  
+            
+            accelerator.print(f"\n>>> [Epoch {epoch}] BẮT ĐẦU STAGE 2: Set LR = 1e-5, Tắt Scheduler cũ & Đóng băng Backbone + Head")
+
+        # 3. Các epoch còn lại của Stage 2
+        else:
             accelerator.print(f"\n>>> [Epoch {epoch}] Đang chạy STAGE 2: GRPO Fine-tuning (Backbone & Head Frozen)")
 
         trainer.train(dataloader_train)
