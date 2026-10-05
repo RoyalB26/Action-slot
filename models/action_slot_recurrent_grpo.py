@@ -94,8 +94,7 @@ class RecurrentChunkSlotAttention(nn.Module):
             slots = mu + eps * sigma
             dist = torch.distributions.Normal(mu, sigma)
             
-            dim_scale = slots.shape[-1] * slots.shape[-2] # K * D
-            log_prob = dist.log_prob(slots).sum(dim=(-1, -2)) / (dim_scale ** 0.5)
+            log_prob = dist.log_prob(slots).mean(dim=[-1, -2])  # [B * G]
         else:
             slots = mu
             log_prob = torch.zeros(batch_size * num_groups, device=mu.device)
