@@ -1,0 +1,63 @@
+{
+  "os":  "Windows-10-10.0.26200-SP0",
+  "python":  "CPython 3.9.25",
+  "startedAt":  "2026-10-05T17:05:23.022746Z",
+  "args":  [
+    "--dataset",
+    "taco",
+    "--root",
+    "D:\\apps\\Datasets\\TACO",
+    "--model_name",
+    "action_slot",
+    "--num_slots",
+    "64",
+    "--bg_slot",
+    "--bg_mask",
+    "--action_attn_weight",
+    "1",
+    "--allocated_slot",
+    "--bg_attn_weight",
+    "0.5",
+    "--num_workers",
+    "0",
+    "--batch_size",
+    "1",
+    "--device",
+    "cuda"
+  ],
+  "program":  "D:\\Study\\NYCU\\Action-slot\\scripts\\train_taco.py",
+  "codePath":  "scripts\\train_taco.py",
+  "codePathLocal":  "train_taco.py",
+  "git":  {
+    "remote":  "https://github.com/RoyalB26/Action-slot.git",
+    "commit":  "acdf9d16afa6328ee3301d40f1a789370a1fa09a"
+  },
+  "email":  "hgbao26@gmail.com",
+  "root":  "D:\\Study\\NYCU\\Action-slot\\scripts",
+  "host":  "LOQ",
+  "executable":  "D:\\apps\\miniconda\\envs\\action_slot\\python.exe",
+  "cpu_count":  8,
+  "cpu_count_logical":  16,
+  "gpu":  "NVIDIA GeForce RTX 4050 Laptop GPU",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "348651266048",
+      "used":  "245630271488"
+    }
+  },
+  "memory":  {
+    "total":  "16849264640"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce RTX 4050 Laptop GPU",
+      "memoryTotal":  "6439305216",
+      "cudaCores":  2560,
+      "architecture":  "Ada",
+      "uuid":  "GPU-de13a316-ff5b-3f1d-cef2-a671e63e4dc5"
+    }
+  ],
+  "cudaVersion":  "13.1",
+  "writerId":  "vnw1m2dahvfe24315vuy7xt969qlpgvu"
+}

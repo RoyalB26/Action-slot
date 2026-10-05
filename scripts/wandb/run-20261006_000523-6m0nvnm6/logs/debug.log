@@ -1,0 +1,22 @@
+2026-10-06 00:05:23,026 INFO    MainThread:35068 [wandb_setup.py:_flush():81] Current SDK version is 0.26.1
+2026-10-06 00:05:23,026 INFO    MainThread:35068 [wandb_setup.py:_flush():81] Configure stats pid to 35068
+2026-10-06 00:05:23,026 INFO    MainThread:35068 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-10-06 00:05:23,026 INFO    MainThread:35068 [wandb_init.py:setup_run_log_directory():723] Logging user logs to D:\Study\NYCU\Action-slot\scripts\wandb\run-20261006_000523-6m0nvnm6\logs\debug.log
+2026-10-06 00:05:23,026 INFO    MainThread:35068 [wandb_init.py:setup_run_log_directory():724] Logging internal logs to D:\Study\NYCU\Action-slot\scripts\wandb\run-20261006_000523-6m0nvnm6\logs\debug-internal.log
+2026-10-06 00:05:23,027 INFO    MainThread:35068 [wandb_init.py:init():850] calling init triggers
+2026-10-06 00:05:23,027 INFO    MainThread:35068 [wandb_init.py:init():855] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2026-10-06 00:05:23,027 INFO    MainThread:35068 [wandb_init.py:init():898] starting backend
+2026-10-06 00:05:25,494 INFO    MainThread:35068 [wandb_init.py:init():913] sending inform_init request
+2026-10-06 00:05:26,652 INFO    MainThread:35068 [wandb_init.py:init():918] backend started and connected
+2026-10-06 00:05:26,653 INFO    MainThread:35068 [wandb_init.py:init():988] updated telemetry
+2026-10-06 00:05:26,707 INFO    MainThread:35068 [wandb_init.py:init():1011] communicating run to backend with 90.0 second timeout
+2026-10-06 00:05:27,284 INFO    MainThread:35068 [wandb_init.py:init():1056] starting run threads in backend
+2026-10-06 00:05:27,490 INFO    MainThread:35068 [wandb_run.py:_console_start():2554] atexit reg
+2026-10-06 00:05:27,490 INFO    MainThread:35068 [wandb_run.py:_redirect():2403] redirect: wrap_raw
+2026-10-06 00:05:27,490 INFO    MainThread:35068 [wandb_run.py:_redirect():2472] Wrapping output streams.
+2026-10-06 00:05:27,490 INFO    MainThread:35068 [wandb_run.py:_redirect():2495] Redirects installed.
+2026-10-06 00:05:27,493 INFO    MainThread:35068 [wandb_init.py:init():1094] run started, returning control to user process
+2026-10-06 00:05:27,493 INFO    MainThread:35068 [wandb_run.py:_config_callback():1415] config_cb None None {'dataset': 'taco', 'oats_test_split': '0', 'root': 'D:\\apps\\Datasets\\TACO', 'model_name': 'action_slot', 'backbone': 'x3d', 'num_slots': 64, 'seq_len': 16, 'allocated_slot': True, 'channel': 256, 'box': False, 'bg_slot': True, 'action_attn_weight': 1.0, 'bg_attn_weight': 0.5, 'bg_mask': True, 'mask_every_frame': 4, 'bg_upsample': 4, 'obj_mask': False, 'flow': False, 'bce_pos_weight': 10, 'ce_pos_weight': 1, 'ce_neg_weight': 0.05, 'ego_loss_weight': 0.5, 'device': 'cuda', 'pretrain': '', 'epochs': 100, 'wd': 0.07, 'lr': 0.0005, 'scheduler': False, 'val_every': 10, 'batch_size': 1, 'num_workers': 0, 'parallel': False, 'tune_block_idx': [0, 1, 2, -3, -2, -1], 'wandb': False, 'stage1_epochs': 30, 'checkpoint': None, 'start_stage2': False, 'start_epoch': 0, 'model_index': -1, 'cp': 'best_model.pth', 'plot': False, 'plot_threshold': 0, 'plot_mode': 'both', 'val_confusion': False, 'ego_motion': -1, 'scale': -1.0, 'test': False, 'gt': False}
+2026-10-06 00:06:18,957 INFO    wandb-AsyncioManager-main:35068 [service_client.py:_forward_responses():134] Reached EOF.
+2026-10-06 00:06:18,958 INFO    wandb-AsyncioManager-main:35068 [mailbox.py:close():155] Closing mailbox, abandoning 1 handles.

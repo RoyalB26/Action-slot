@@ -101,7 +101,7 @@ def generate_model(args, num_ego_class, num_actor_class):
                 t.requires_grad=True
 
     elif model_name == 'action_slot': 
-        model = action_slot_recurrent_grpo.ACTION_SLOT_RECURRENT(args, num_ego_class, num_actor_class, args.num_slots)
+        model = action_slot.ACTION_SLOT(args, num_ego_class, num_actor_class, args.num_slots)
         for t in model.parameters():
             t.requires_grad=True
 
