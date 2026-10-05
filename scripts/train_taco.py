@@ -679,7 +679,9 @@ if __name__ == "__main__":
     # =========================================================================
     checkpoint_path = getattr(args, "checkpoint", None) or getattr(args, "resume", None)
     
-    if checkpoint_path and os.path.isfile(checkpoint_path):
+    if checkpoint_path:
+        if not os.path.isfile(checkpoint_path):
+            raise Exception("Lỗi đường dẫn checkpoint")
         accelerator.print(f"\n>>> Đang nạp checkpoint từ: {checkpoint_path}")
         # Map về device hiện tại thông qua accelerator
         ckpt = torch.load(checkpoint_path, map_location=accelerator.device)
@@ -751,12 +753,12 @@ if __name__ == "__main__":
             # Lấy đúng raw optimizer bất kể có dùng PCGrad hay không
             raw_opt = trainer.raw_optimizer if hasattr(trainer, "raw_optimizer") else trainer.optimizer
             for param_group in raw_opt.param_groups:
-                param_group['lr'] = 1e-5
+                param_group['lr'] = 5e-5
 
             # Tắt scheduler cũ để không bị ghi đè LR cũ
             trainer.scheduler = None  
             
-            accelerator.print(f"\n>>> [Epoch {epoch}] BẮT ĐẦU STAGE 2: Set LR = 1e-5, Tắt Scheduler cũ & Đóng băng Backbone + Head")
+            accelerator.print(f"\n>>> [Epoch {epoch}] BẮT ĐẦU STAGE 2: Set LR = 5e-5, Tắt Scheduler cũ & Đóng băng Backbone + Head")
 
         # 3. Các epoch còn lại của Stage 2
         else:
