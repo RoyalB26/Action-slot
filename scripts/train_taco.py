@@ -147,6 +147,15 @@ class Engine(object):
         self.attn_loss_epoch = 0.0
         self.correct_ego = 0
         self.total_ego = 0
+        self.rl_metrics= {
+            "rl/mean_reward": 0.0,
+            "rl/std_reward": 0.0,
+            "rl/approx_kl": 0.0,
+            "rl/clip_fraction": 0.0,
+            "rl/advantages_mean": 0.0,
+            "rl/policy_loss": 0.0,
+            "rl/kl_penalty": 0.0
+        }
         self.label_actor_list = []
         self.map_pred_actor_list = []
         self.action_inter = AverageMeter()
@@ -246,6 +255,7 @@ class Engine(object):
                 grpo_loss = loss_dict["grpo"]
                 actor_loss = loss_dict["actor"]
                 attn_loss = loss_dict["attn"]["attn_loss"]
+                metrics = loss_dict['metrics']
                 ego_loss = (
                     loss_dict["ego"]
                     if loss_dict["ego"] is not None
@@ -276,7 +286,8 @@ class Engine(object):
                 self.actor_loss_epoch += float(self.accelerator.gather(actor_loss).mean().item())
                 self.grpo_loss_epoch += float(self.accelerator.gather(grpo_loss).mean().item())
                 self.ego_loss_epoch += float(self.accelerator.gather(ego_loss).mean().item())
-
+                if metrics:
+                    self.rl_metrics = {k: self.rl_metrics[k] + metrics[k] for k in self.rl_metrics}
                 # Gom dự đoán trung bình của G nhóm để tính metric
                 pred_actor_mean = torch.sigmoid(pred_actor.mean(dim=1))
                 self.map_pred_actor_list.append(
@@ -390,7 +401,7 @@ class Engine(object):
         loss_epoch = self.loss_epoch / self.num_batches
         actor_loss_epoch = self.actor_loss_epoch / self.num_batches
         grpo_loss_epoch = self.grpo_loss_epoch / self.num_batches
-
+        epoch_metrics = {k: self.rl_metrics[k] / self.num_batches for k in self.rl_metrics}
         # Log metrics lên WandB / Tracker
         self.accelerator.log(
             {
@@ -404,10 +415,17 @@ class Engine(object):
             step=self.cur_epoch,
         )
 
+        self.accelerator.log(self.rl_metrics, step= self.cur_epoch)
+
         self.accelerator.print(f"\n[Epoch {self.cur_epoch}] Total Loss: {loss_epoch:.4f}")
         self.accelerator.print(
             f"Actor Loss: {actor_loss_epoch:.4f} | GRPO Loss: {grpo_loss_epoch:.4f}"
         )
+        
+        self.accelerator.print(f"--- RL Stats ---")
+        self.accelerator.print(f"Mean Reward: {epoch_metrics['rl/mean_reward']:.4f} | Std Reward: {epoch_metrics['rl/std_reward']:.4f}")
+        self.accelerator.print(f"Approx KL: {epoch_metrics['rl/approx_kl']:.5f} | Clip Fraction: {epoch_metrics['rl/clip_fraction']*100:.2f}%")
+
         # check_real_performance(label_actor_list, map_pred_actor_list)
         self.accelerator.print(f"(train) mAP of the actor: {mAP:.4f}")
         self.train_loss.append(loss_epoch)

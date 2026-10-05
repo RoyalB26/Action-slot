@@ -91,33 +91,38 @@ class ActionSlotLoss(nn.Module):
     reward = -per_sample_loss  # Reward là negative loss
     return reward, per_sample_loss.mean()
   
-  def compute_grpo_loss(self, log_prob, old_log_prob, rewards):
-        B, G = rewards.shape
-        if G <= 1:
-            return torch.tensor(0.0, device=rewards.device)
+  def compute_grpo_loss(self, log_probs, old_log_probs, rewards, epsilon=0.2, beta=0.01):
+    # 1. Advantage Computation
+    mean_r = rewards.mean(dim=-1, keepdim=True)
+    std_r = rewards.std(dim=-1, keepdim=True)
+    advantages = (rewards - mean_r) / (std_r + 1e-8)
 
-        # 1. Group Relative Advantage
-        mean_r = rewards.mean(dim=-1, keepdim=True)
-        std_r = rewards.std(dim=-1, keepdim=True) + 1e-8
-        advantages = (rewards - mean_r) / std_r  # [B, G]
+    # 2. Probability Ratio & Clipping
+    ratio = torch.exp(log_probs - old_log_probs)
+    surr1 = ratio * advantages
+    surr2 = torch.clamp(ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages
+    policy_loss = -torch.min(surr1, surr2).mean()
 
-        # 2. Clamped Importance Sampling Ratio
-        log_diff = log_prob - old_log_prob.detach()
-        
-        # Kẹp chặt trong khoảng [-10, 10] để exp() không bao giờ nổ inf
-        log_diff_safe = torch.clamp(log_diff, min=-10.0, max=10.0)
-        ratio = torch.exp(log_diff_safe)
+    # 3. KL Divergence (Approximation)
+    approx_kl = (old_log_probs - log_probs).mean()
+    kl_penalty = beta * approx_kl
 
-        # 3. PPO-Clipped Loss
-        surr1 = ratio * advantages
-        surr2 = torch.clamp(ratio, 1.0 - self.grpo_clip_eps, 1.0 + self.grpo_clip_eps) * advantages
-        policy_loss = -torch.min(surr1, surr2).mean()
+    total_loss = policy_loss + kl_penalty
 
-        # 4. KL Divergence (có kẹp chặn để tránh lệch gradient)
-        kl_div = torch.clamp((old_log_prob.detach() - log_prob), min=-20.0, max=20.0).mean()
-        grpo_loss = policy_loss + self.grpo_kl_coef * kl_div
+    # 4. Trích xuất Metrics để giám sát
+    with torch.no_grad():
+        clip_frac = ((ratio - 1.0).abs() > epsilon).float().mean()
+        rl_metrics = {
+            "rl/mean_reward": mean_r.mean().item(),
+            "rl/std_reward": std_r.mean().item(),
+            "rl/approx_kl": approx_kl.item(),
+            "rl/clip_fraction": clip_frac.item(),
+            "rl/advantages_mean": advantages.abs().mean().item(),
+            "rl/policy_loss": policy_loss.item(),
+            "rl/kl_penalty": kl_penalty.item()
+        }
 
-        return grpo_loss
+    return total_loss, rl_metrics
 
   def attn_loss(self, attn, label, actor, validate):
     # Giữ nguyên cấu trúc giám sát mask của bạn (nếu có dùng obj_mask / bg_mask)
@@ -156,12 +161,12 @@ class ActionSlotLoss(nn.Module):
         and pred.get("log_prob") is not None
         and pred.get("old_log_prob") is not None
     ):
-      grpo_loss = self.compute_grpo_loss(
+      grpo_loss, metrics = self.compute_grpo_loss(
           pred["log_prob"], pred["old_log_prob"], rewards
       )
     else:
       grpo_loss = torch.tensor(0.0, device=pred_actor.device)
-
+      metrics= None
     attn_dict = self.attn_loss(pred.get("attn"), label, pred_actor, validate)
 
     return {
@@ -169,4 +174,5 @@ class ActionSlotLoss(nn.Module):
         "actor": actor_loss,
         "grpo": grpo_loss,
         "attn": attn_dict,
+        "metrics": metrics
     }
