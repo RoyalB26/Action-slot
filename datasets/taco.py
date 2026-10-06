@@ -103,29 +103,46 @@ class TACO(Dataset):
         data['id'] = self.id[index]
         data['variants'] = self.variants[index]
         data['map'] = self.maps[index]
-        for idx in range(index, index + 17):
+
+        for frame_idx, idx in enumerate(range(index, index + 16)):
             with self.env.begin() as txn:
                 raw_data = txn.get(f"{idx:08d}".encode("ascii"))
                 sample = pickle.loads(raw_data)
-            
-                frame = Image.open(io.BytesIO(sample["frame"])).convert('RGB')
-                data['videos'].append(frame)
-                if self.args.plot:
-                    data['raw'].append(frame)
-                if self.split =='train' or self.split == 'val':
-                    if self.args.bg_mask:
-                        if self.args.bg_mask and idx % self.args.mask_every_frame == 0:
-                            if sample["bg"] != None:
-                                bg = Image.open(io.BytesIO(sample["bg"])).convert('L')
-                                data['bg_seg'].append(bg)
-                            else:
-                                raise Exception(f"bg at {index} - {idx} is None")
-                    if self.args.obj_mask:
-                        if self.args.obj_mask and idx %self.args.mask_every_frame == 0 or (self.args.plot and self.args.plot_mode==''):
-                            npy_array = np.load(io.BytesIO(sample["npy"]))
-                            data['obj_masks'].append(get_obj_mask(npy_array))
-        data['videos'] = to_np(data['videos'], self.args.model_name, self.args.backbone)
-        data['bg_seg'] = to_np_no_norm(data['bg_seg'])
+
+            frame = Image.open(io.BytesIO(sample["frame"])).convert("RGB")
+            data["videos"].append(frame)
+
+            if self.args.plot:
+                data["raw"].append(frame)
+
+            if self.split == "train" or self.split == "val":
+                # Kiểm tra theo frame_idx (cục bộ từ 0 -> 16), KHÔNG dùng idx
+                if (
+                    self.args.bg_mask
+                    and frame_idx % self.args.mask_every_frame == 0
+                ):
+                    if sample["bg"] is not None:
+                        bg = Image.open(io.BytesIO(sample["bg"])).convert("L")
+                        data["bg_seg"].append(bg)
+                    else:
+                        raise Exception(f"bg at {index} - {idx} is None")
+
+                if self.args.obj_mask:
+                    if frame_idx % self.args.mask_every_frame == 0 or (
+                        self.args.plot and self.args.plot_mode == ""
+                    ):
+                        npy_array = np.load(io.BytesIO(sample["npy"]))
+                        data["obj_masks"].append(get_obj_mask(npy_array))
+
+        data["videos"] = to_np(
+            data["videos"], self.args.model_name, self.args.backbone
+        )
+        data["bg_seg"] = to_np_no_norm(data["bg_seg"])
+
+        # Đảm bảo obj_masks cũng được stack thành tensor nếu có sử dụng
+        if self.args.obj_mask and len(data["obj_masks"]) > 0:
+            data["obj_masks"] = torch.stack(data["obj_masks"], dim=0)
+
         return data
                             
 def get_obj_mask(obj_masks):
