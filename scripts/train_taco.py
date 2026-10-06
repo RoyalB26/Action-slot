@@ -406,7 +406,8 @@ if __name__ == '__main__':
     if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
         abs_logdir = f'\\\\?\\{abs_logdir}'
     logdir = abs_logdir
-
+    lmdb_train_path = "/dev/shm/taco_train.lmdb"
+    lmdb_val_path = "/dev/shm/taco_val.lmdb"
     if accelerator.is_main_process:
         os.makedirs(logdir, exist_ok=True)
         # Khởi tạo WandB
@@ -416,14 +417,15 @@ if __name__ == '__main__':
             init_kwargs={"wandb": {"name": os.path.basename(logdir)}}
         )
         writer = SummaryWriter(log_dir=logdir)
+        lmdb_train_path, lmdb_val_path= put_into_ram()
     else:
         writer = None
-
+    accelerator.wait_for_everyone()
     num_ego_class = 4
     num_actor_class = 64
 
     # Dataloaders
-    lmdb_train_path, lmdb_val_path= put_into_ram()
+    
     train_set = TACO(args,lmdb_train_path, lmdb_val_path, split='train')
     val_set = TACO(args,lmdb_train_path, lmdb_val_path, split='val')
 
