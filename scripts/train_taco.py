@@ -410,12 +410,6 @@ if __name__ == '__main__':
     lmdb_val_path = "/kaggle/working/taco_val.lmdb"
     if accelerator.is_main_process:
         os.makedirs(logdir, exist_ok=True)
-        # Khởi tạo WandB
-        accelerator.init_trackers(
-            project_name=getattr(args, "wandb_project", "TACO-Action-Slot"),
-            config=vars(args),
-            init_kwargs={"wandb": {"name": os.path.basename(logdir)}}
-        )
         writer = SummaryWriter(log_dir=logdir)
         lmdb_train_path, lmdb_val_path= put_into_working()
     else:
@@ -423,7 +417,18 @@ if __name__ == '__main__':
     accelerator.wait_for_everyone()
     num_ego_class = 4
     num_actor_class = 64
-
+    accelerator.init_trackers(
+            project_name=os.environ.get(
+                "WANDB_PROJECT", getattr(args, "wandb_project", "action_slot")
+            ),
+            config=vars(args),
+            init_kwargs={
+                "wandb": {
+                    "name": os.path.basename(logdir),
+                    "mode": "online",
+                }
+            },
+        )
     # Dataloaders
     
     train_set = TACO(args,lmdb_train_path, lmdb_val_path, split='train')
