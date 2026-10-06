@@ -297,6 +297,8 @@ class Engine(object):
                 "Learning Rate": f"{lr_current:.2e}"
             }, title="Training Summary")
 
+            display_metrics_table(self.cur_epoch, tracking_avg, title="Training Tracking")
+
             self.accelerator.log(train_metrics, step=self.cur_epoch)
 
         self.cur_epoch += 1
