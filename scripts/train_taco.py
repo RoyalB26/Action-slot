@@ -43,7 +43,7 @@ from datasets.taco import TACO
 from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
-from put_lmdb import put_into_ram
+from put_lmdb import *
 
 def display_metrics_table(epoch, metrics_dict, title="Epoch Summary"):
     """In bảng kết quả chuyên nghiệp ra console."""
@@ -406,8 +406,8 @@ if __name__ == '__main__':
     if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
         abs_logdir = f'\\\\?\\{abs_logdir}'
     logdir = abs_logdir
-    lmdb_train_path = "/dev/shm/taco_train.lmdb"
-    lmdb_val_path = "/dev/shm/taco_val.lmdb"
+    lmdb_train_path = "/kaggle/working/taco_train.lmdb"
+    lmdb_val_path = "/kaggle/working/taco_val.lmdb"
     if accelerator.is_main_process:
         os.makedirs(logdir, exist_ok=True)
         # Khởi tạo WandB
@@ -417,7 +417,7 @@ if __name__ == '__main__':
             init_kwargs={"wandb": {"name": os.path.basename(logdir)}}
         )
         writer = SummaryWriter(log_dir=logdir)
-        lmdb_train_path, lmdb_val_path= put_into_ram()
+        lmdb_train_path, lmdb_val_path= put_into_working()
     else:
         writer = None
     accelerator.wait_for_everyone()
