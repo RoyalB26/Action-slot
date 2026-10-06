@@ -43,7 +43,7 @@ from datasets.taco import TACO
 from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
-
+from put_lmdb import put_into_ram
 
 def display_metrics_table(epoch, metrics_dict, title="Epoch Summary"):
     """In bảng kết quả chuyên nghiệp ra console."""
@@ -423,8 +423,9 @@ if __name__ == '__main__':
     num_actor_class = 64
 
     # Dataloaders
-    train_set = TACO(args=args, split='train')
-    val_set = TACO(args=args, split='val')
+    lmdb_train_path, lmdb_val_path= put_into_ram()
+    train_set = TACO(args,lmdb_train_path, lmdb_val_path, split='train')
+    val_set = TACO(args,lmdb_train_path, lmdb_val_path, split='val')
 
     dataloader_train = DataLoader(
         train_set, batch_size=args.batch_size, shuffle=True,

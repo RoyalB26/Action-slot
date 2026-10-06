@@ -12,427 +12,87 @@ import sys
 import json 
 import random
 import torchvision.transforms as transforms
-
-
-
+import lmdb
+import io
+import pickle
 class TACO(Dataset):
-
     def __init__(self, 
                 args,
+                lmdb_train_path, 
+                lmdb_val_path,
                 split='val',
-                root='/data/carla_dataset/data_collection',
+                root='',
                 Max_N=20,
                 accelerator= None):
-        root = args.root
-
-        self.split = split
-        self.model_name = args.model_name
-        self.seq_len = args.seq_len
-        self.maps = []
+        self.args= args
+        self.split= split
+        self.root= root
+        self.Max_N= Max_N
+        self.accelerator= accelerator
+        
+        self.videos_list= []
         self.id = []
-        self.variants = []
-        self.scenario_name = []
-        self.args =args
-
-        self.videos_list = []
-        self.seg_list = []
-        self.obj_seg_list = []
-
-        self.idx = []
+        self.variants= []
         self.gt_ego = []
         self.gt_actor = []
-        self.slot_eval_gt = []
-
-
-        self.step = []
-        self.start_idx = []
         self.num_class = 64
-        self.max_num_obj = []
+        self.maps= []
+        self.lmdb_path = lmdb_val_path
+        path_to_idx= []
+        self._env= None
+        if split == 'train':
+            self.lmdb_path = lmdb_train_path
+            with open("/kaggle/input/datasets/royalb26/taco-dataset/taco_path_to_idx.json", 'r', encoding= 'utf-8') as f:
+                path_to_idx= json.load(f)
+        else:
+            with open("/kaggle/input/datasets/royalb26/taco-val-dataset/taco_path_to_idx.json", 'r', encoding= 'utf-8') as f:
+                path_to_idx= json.load(f)
         
-        self.Max_N = Max_N
-
-
-        max_num_label_a_video = 0
-        total_label = 0
-        max_frame_a_video = 0
-        min_frame_a_video = 100
-        total_frame = 0
-        total_videos = 0
-
-        self.accelerator= accelerator
-        n=0
-
-        f = open('../datasets/taco_'+split+'_data.json')
-        scenario_list = json.load(f)
         f_label = open('../datasets/taco_'+split+'_label.json')
         label_list = json.load(f_label)
-        group_rules = {
-            "2part": ["ap_Town10HD"],
-            "part3": ["ap_Town03", "ap_Town04", "ap_Town6", "ap_Town07"],
-            "part2": ["ap_Town01", "ap_Town05", "interactive"],
-            "part1": ["ap_Town02", "non-interactive", "runner_Town03", "runner_Town05", "runner_Town10HD"]
-        }
 
-        group_rules2 = {
-            "part4": ["i1", "t1", "t2", "t3"],
-            "part5": ["i4", "t5", "t6", "t7"]
-        }
-
-        mapping = {item: part for part, items in group_rules.items() for item in items}
-        mapping2 = {item: part for part, items in group_rules2.items() for item in items}
-
-        disable_pbar = getattr(self.args, "wandb", False) or (
-            self.accelerator is not None and not self.accelerator.is_local_main_process
-        )
-
-        pbar = tqdm(
-            scenario_list,
-            desc="Processing Scenarios",
-            file=sys.stdout,
-            dynamic_ncols=True,
-            mininterval=0.5,
-            leave=False,  # Xóa thanh bar khi hoàn thành để giữ cell notebook sạch sẽ
-            disable= disable_pbar
-        )
-
-        log_interval = max(1, len(scenario_list) // 10)
-        for step_idx, scenario in enumerate(pbar if not disable_pbar else scenario_list):
-            if not scenario in label_list:
-                continue
-            gt = label_list[scenario]
-                    
-            if self.args.wandb and step_idx % log_interval == 0:
-                progress_pct = (step_idx + 1) / len(scenario_list) * 100
-                self.accelerator.log(
-                    {
-                        f"{self.split}/scenario_list/batch_progress_pct": progress_pct,
-                        f"{self.split}/scenario_list/current_batch": step_idx + 1,
-                    }
-                )
-            # ------------get labels-------------
-            # get multi-instance multi-class labels for object-aware methods
-            if self.args.box:
-                proposal_train_label, gt_ego, gt_actor = get_labels(args, gt, num_slots=self.Max_N)
-            # get multi-instance multi-class labelsfor non-allocated slot-based methods
-            elif 'slot' in args.model_name and not args.allocated_slot:
-                proposal_train_label, gt_ego, gt_actor = get_labels(args, gt, num_slots=args.num_slots)
-            # get multi-label for allocated slot-based and video-level methods
-            else:
-                gt_ego, gt_actor = get_labels(args, gt, num_slots=args.num_slots)
-
-
-            # ------------statistics-------------
-            if torch.count_nonzero(gt_actor) > max_num_label_a_video:
-                max_num_label_a_video = torch.count_nonzero(gt_actor)
-            total_label += torch.count_nonzero(gt_actor)
-                             
-            video_folder = ['downsampled/', 'downsampled_224/']
-            if args.model_name == 'mvit' or args.model_name == 'videoMAE':
-                video_folder = video_folder[1]
-            else:
-                video_folder = video_folder[0]
-
+        dir_to_idx= {}
+        for k, v in path_to_idx.items():
+            parts= k.split('/')
+            path= parts[7:11]
+            path= "/".join(path)
+            if path not in dir_to_idx:
+                dir_to_idx[path]= v
+        
+        for step_idx, (scenario, v) in enumerate(label_list.items()):
             parent_folder, basic, variant = scenario.split('/')
-            folder_part= mapping.get(parent_folder, "default_value")
-            root= "/kaggle/input/datasets/royalb26/taco-dataset-" + folder_part + f"/Bn sao ca {parent_folder}"
-            if folder_part == '2part':
-                root= "/kaggle/input/datasets/royalb26/taco-dataset-" + mapping.get(basic, "null")
-            
-            scenario_path = os.path.join(root,parent_folder,basic,'variant_scenario',variant)
-            video_folder_path = os.path.join(scenario_path,'rgb',video_folder)
-            if os.path.isdir(video_folder_path):
-                check_data = [os.path.join(video_folder_path,img) for img in os.listdir(video_folder_path) if os.path.isfile(os.path.join(video_folder_path,img))]
-                check_data.sort()
-            else:
-                continue
-
-            if len(check_data) < 50:
-                continue
-
-            videos = []
-            segs = []
-            obj_f = []
-            idx = []
-
-            start_frame = int(check_data[0].split('/')[-1].split('.')[0])
-            end_frame = int(check_data[-1].split('/')[-1].split('.')[0])
-            num_frame = end_frame - start_frame + 1
-            step = num_frame // self.seq_len
-
-            max_num = 50
-            for m in range(max_num):
-                start = start_frame + m
-                if start_frame + (self.seq_len-1)*step > end_frame:
-                    break
-                videos_temp = []
-                seg_temp = []
-                idx_temp = []
-                obj_temp = []
-                for i in range(start, end_frame+1, step):
-                    imgname = f"{str(i).zfill(8)}.jpg"
-                    segname = f"{str(i).zfill(8)}.png"
-                    boxname = f"{str(i).zfill(8)}.json"
-                    objname = f"{str(i).zfill(8)}.npy"
-                    if os.path.isfile(os.path.join(video_folder_path,imgname)):
-                        videos_temp.append(os.path.join(video_folder_path,imgname))
-                        idx_temp.append(i-start_frame)
-                    if os.path.isfile(os.path.join(scenario_path,'mask','background',segname)):
-                        seg_temp.append(os.path.join(scenario_path,'mask','background',segname))
-                    if os.path.isfile(os.path.join(scenario_path,'mask','object',objname)):
-                        obj_temp.append(os.path.join(scenario_path,'mask','object',objname))
-                    if len(videos_temp) == self.seq_len:
-                        break
-                if len(videos_temp) == self.seq_len:
-                    videos.append(videos_temp)
-                    idx.append(idx_temp)
-                    segs.append(seg_temp)
-                    obj_f.append(obj_temp)
-
-            self.maps.append(parent_folder)
-            self.id.append(basic)
-            self.variants.append(variant)
-            self.scenario_name.append(os.path.join(parent_folder, basic, variant))
-            self.videos_list.append(videos)
-            self.idx.append(idx)
-            self.seg_list.append(segs)
-            self.obj_seg_list.append(obj_f)
-            self.gt_ego.append(gt_ego)
-            
-            if ('slot' in args.model_name and not args.allocated_slot) or args.box:
-                self.gt_actor.append(proposal_train_label)
-                self.slot_eval_gt.append(gt_actor)
-            else:
+            sample_dir= os.path.join(parent_folder,basic,'variant_scenario',variant)
+            idx= dir_to_idx.get(sample_dir, -1)
+            if idx != -1:
+                self.videos_list.append(idx)
+                gt = v
+                self.id.append(basic)
+                self.variants.append(variant)
+                gt_ego, gt_actor = get_labels(args, gt, num_slots=args.num_slots)
+                self.gt_ego.append(gt_ego)
                 self.gt_actor.append(gt_actor)
-
-        if args.box:
-            if args.gt:
-                self.parse_tracklets() 
-            else:
-                self.parse_tracklets_detection()
-
+                self.maps.append(parent_folder)
+            
         print('num_videos: ' + str(len(self.variants)))
 
-    def parse_tracklets(self):
-        """
-            tracklet (List[List[Dict]]):
-                T , boxes per_frame , key: obj_id
-            return:
-                T x N x 4
-        """
-        def parse_tracklet(tracklet,root,index):
-            out = np.zeros((self.seq_len,self.Max_N,4))
-            obj_id_dict = {}
-            count = 0
-            for i,track in enumerate(tracklet):
-                for boxes in track:
-                    for obj in boxes:
-                        if obj not in obj_id_dict :
-                            if count == 20:
-                                continue
-                            obj_id_dict[obj] = count
-                            count += 1
-                        out[i][obj_id_dict[obj]] = boxes[obj]
-            np.save(os.path.join(root,'tracks','%s' % (index)),out)
-            # with open(os.path.join(root,'tracks','%s.json' % (index)), 'w') as f:
-            #     json.dump(out, f)
-                        
-        disable_pbar = getattr(self.args, "wandb", False) or (
-            self.accelerator is not None and not self.accelerator.is_local_main_process
-        )
-
-        # for each data
-        pbar= tqdm(
-            self.videos_list,
-            desc="Loading Videos",
-            file=sys.stdout,
-            dynamic_ncols=True,
-            mininterval=0.5,
-            leave=False,
-            disable= disable_pbar
-        )
-
-        log_interval = max(1, len(self.videos_list) // 10)
-                    
-        for step_idx, data in enumerate(pbar if not disable_pbar else self.videos_list):
-            if self.args.wandb and step_idx % log_interval == 0:
-                progress_pct = (step_idx + 1) / len(self.videos_list) * 100
-                self.accelerator.log(
-                    {
-                        f"{self.split}/self.videos_list/batch_progress_pct": progress_pct,
-                        f"{self.split}/self.videos_list/current_batch": step_idx + 1,
-                    }
-                )
-            root = data[0][0].split('/')
-            root = root[:-3]
-            root = '/'+os.path.join(*root)
-            if not os.path.isdir(os.path.join(root,'tracks')):
-                os.mkdir(os.path.join(root,'tracks'))
-            if not os.path.isdir(os.path.join(root,'tracks','gt')):
-                os.mkdir(os.path.join(root,'tracks','gt'))
-            if not os.path.isdir(os.path.join(root,'tracks','pred')):
-                os.mkdir(os.path.join(root,'tracks','pred'))
-            # read bbox.json
-            f = open(os.path.join(root,'bbox.json'))
-            bboxs = json.load(f)
-            f.close()
-            for i,sample in enumerate(data):
-                out = np.zeros((self.seq_len,self.Max_N,4))
-                obj_id_dict = {}
-                count = 0
-                # iterate each imgs
-                for j,frame_idx in enumerate(sample):
-                    frame_idx = frame_idx.split('/')[-1][:-4]
-                    for obj_id, box in bboxs[frame_idx].items():
-                        if obj_id not in obj_id_dict:
-                            if count == 20:
-                                continue
-                            obj_id_dict[obj_id] = count
-                            count += 1
-                        out[j][obj_id_dict[obj_id]] = box
-                np.save(os.path.join(root,'tracks','gt','%s' % (i)),out)
-                
-    def parse_tracklets_detection(self):
-        """
-            read {scenario}/tracking_pred_2/tracks/front.txt
-            format: frame, id, x, y, w, h
-        """
-        
-        def parse_tracklet():
-            # frame_id: {id: [x,y,w,h]}
-            out = {}
-            for line in tracklet:
-                line = line.split(' ')[:6]
-                frame = int(line[0])
-                obj_id = int(line[1])
-                box = [int(line[2]),int(line[3]),int(line[2])+int(line[4]),int(line[3])+int(line[5])]
-                if frame not in out:
-                    out[frame] = {}
-                out[frame][obj_id] = box
-            return out
-            
-        disable_pbar = getattr(self.args, "wandb", False) or (
-            self.accelerator is not None and not self.accelerator.is_local_main_process
-        )
-
-        
-                
-        pbar= tqdm(
-            zip(self.videos_list, self.idx),
-            total=len(self.videos_list), 
-            desc="Indexing Videos",
-            file=sys.stdout,
-            dynamic_ncols=True,
-            mininterval=0.5,
-            leave=False,
-            disable= disable_pbar
-        )
-
-        log_interval = max(1, len(self.videos_list) // 10)
-        
-        for step_idx, (data,idx) in enumerate(pbar if not disable_pbar else zip(self.videos_list, self.idx)):
-            if self.args.wandb and step_idx % log_interval == 0:
-                progress_pct = (step_idx + 1) / len(self.videos_list) * 100
-                self.accelerator.log(
-                    {
-                        f"{self.split}/zip(self.videos_list, self.idx)/batch_progress_pct": progress_pct,
-                        f"{self.split}/zip(self.videos_list, self.idx)/current_batch": step_idx + 1,
-                    }
-                )
-            root = data[0][0].split('/')
-            root = root[:-3]
-            root = '/'+os.path.join(*root)
-            f = open(os.path.join(root,'tracks','pred','downsampled.txt'))
-            tracklet = f.readlines()
-            # parse_tracklet
-            tracklet = parse_tracklet()
-            f.close()
-            # for every sample]
-            assert len(data) == len(idx)
-            for i,idx_list in enumerate(idx):
-                out = np.zeros((self.seq_len,self.Max_N,4))
-                obj_id_dict = {}
-                # tracklet id
-                count = 0
-                # img frame id
-                for j,index in enumerate(idx_list):
-                    try:
-                        for obj_id in tracklet[int(index)+1]:
-                            if obj_id not in obj_id_dict:
-                                obj_id_dict[obj_id] = count
-                                count += 1
-                            try:
-                                out[j][obj_id_dict[obj_id]] = tracklet[int(index)+1][obj_id]
-                            except:
-                                continue
-                    except:
-                        continue
-                np.save(os.path.join(root,'tracks','pred','%s' % (i)),out)
-                        
-    def tracklet_counter(self):
-        """
-            tracklet (List[List[Dict]]):
-                T , boxes per_frame , key: obj_id
-            return:
-                T x N x 4
-        """
-
-        for idx, data in enumerate(self.videos_list):
-            num_samples = len(data)
-            root = data[num_samples//2][0].split('/')
-            root = root[:-3]
-            root = '/'+os.path.join(*root)
-            if not os.path.isdir(os.path.join(root,'tracks')):
-                os.mkdir(os.path.join(root,'tracks'))
-            if not os.path.isdir(os.path.join(root,'tracks','gt')):
-                os.mkdir(os.path.join(root,'tracks','gt'))
-            if not os.path.isdir(os.path.join(root,'tracks','pred')):
-                os.mkdir(os.path.join(root,'tracks','pred'))
-            # read bbox.json
-            f = open(os.path.join(root,'bbox.json'))
-            bboxs = json.load(f)
-            f.close()
-            obj_id_dict = {}
-            count = 0
-            remove_data_list = []
-            sample = data[num_samples//2]
-            for j,frame_idx in enumerate(sample):
-                frame_idx = frame_idx.split('/')[-1][:-4]
-                for obj_id, box in bboxs[frame_idx].items():
-                    if obj_id not in obj_id_dict:
-                        obj_id_dict[obj_id] = count
-                        count += 1
-
-                if self.args.num_objects == 10 and count > 10:
-                    remove_data_list.append(data)
-                    break
-                if self.args.num_objects == 20 and count < 10 and count > 20:
-                    # self.videos_list.remove(data)
-                    # del self.videos_list[idx]
-                    remove_data_list.append(data)
-                    break
-                if self.args.num_objects == 21 and count < 20:
-                    # self.videos_list.remove(data)
-                    # del self.videos_list[idx]
-                    remove_data_list.append(data)
-                    break
-        for video in self.videos_list:
-            remove = False
-            for remove_data in remove_data_list:
-                print(video)
-                print(remove_data)
-                if remove_data == video:
-                    remove = True
-                    break
-            if remove:
-                self.videos_list.remove(video)
-
-
+    @property
+    def env(self):
+        # Nếu chưa mở thì mở, nếu mở rồi thì dùng lại
+        if self._env is None:
+            self._env = lmdb.open(
+                self.lmdb_path,
+                readonly=True,
+                lock=False,
+                readahead=False,
+                meminit=False
+            )
+        return self._env
+    
     def __len__(self):
         """Returns the length of the dataset. """
         return len(self.videos_list)
 
     def __getitem__(self, index):
-        """Returns the item at index idx. """
         data = dict()
         data['videos'] = []
         data['bg_seg'] = []
@@ -442,57 +102,33 @@ class TACO(Dataset):
         data['actor'] = self.gt_actor[index]
         data['id'] = self.id[index]
         data['variants'] = self.variants[index]
-
         data['map'] = self.maps[index]
-        if ('slot' in self.args.model_name and not self.args.allocated_slot) or self.args.box:
-            data['slot_eval_gt'] = self.slot_eval_gt[index]
-
-        if self.split =='train':
-            sample_idx = random.randint(0, len(self.videos_list[index])-1)
-        else:
-            sample_idx = len(self.videos_list[index])//2
-
-        seq_videos = self.videos_list[index][sample_idx]
-        if self.args.bg_mask:
-            seq_seg = self.seg_list[index][sample_idx]
-        if self.args.obj_mask or (self.args.plot and self.args.plot_mode==''):
-            obj_masks_list = self.obj_seg_list[index][sample_idx]
-
-        # add tracklets
-        if self.args.box:
-            track_path = seq_videos[0].split('/')
-            track_path = track_path[:-3]
-            if self.args.gt:
-                track_path = '/' + os.path.join(*track_path,'tracks','gt',str(sample_idx)) + '.npy'
-            else:
-                track_path = '/' + os.path.join(*track_path,'tracks','pred',str(sample_idx)) + '.npy'
-            tracklets = np.load(track_path)
-            data['box'] = tracklets
-
-        for i in range(self.seq_len):
-            x = Image.open(seq_videos[i]).convert('RGB')
-            # x = scale(x, 2, self.args.model_name)
-            data['videos'].append(x)
-            if self.args.plot:
-                data['raw'].append(x)
-            if self.split =='train' or self.split == 'val':
-                if self.args.bg_mask:
-                    if self.args.bg_mask and i %self.args.mask_every_frame == 0:
-                        data['bg_seg'].append(Image.open(seq_seg[i]).convert('L'))
-                if self.args.obj_mask:
-                    if self.args.obj_mask and i %self.args.mask_every_frame == 0 or (self.args.plot and self.args.plot_mode==''):
-                        data['obj_masks'].append(get_obj_mask(obj_masks_list[i]))
-        if self.args.plot:
-            data['raw'] = to_np_no_norm(data['raw'])
-    
+        for idx in range(index, index + 17):
+            with self.env.begin() as txn:
+                raw_data = txn.get(f"{idx:08d}".encode("ascii"))
+                sample = pickle.loads(raw_data)
+            
+                frame = Image.open(io.BytesIO(sample["frame"])).convert('RGB')
+                data['videos'].append(frame)
+                if self.args.plot:
+                    data['raw'].append(frame)
+                if self.split =='train' or self.split == 'val':
+                    if self.args.bg_mask:
+                        if self.args.bg_mask and idx % self.args.mask_every_frame == 0:
+                            if sample["bg"] != None:
+                                bg = Image.open(io.BytesIO(sample["bg"])).convert('L')
+                                data['bg_seg'].append(bg)
+                            else:
+                                raise Exception(f"bg at {index} - {idx} is None")
+                    if self.args.obj_mask:
+                        if self.args.obj_mask and idx %self.args.mask_every_frame == 0 or (self.args.plot and self.args.plot_mode==''):
+                            npy_array = np.load(io.BytesIO(sample["npy"]))
+                            data['obj_masks'].append(get_obj_mask(npy_array))
         data['videos'] = to_np(data['videos'], self.args.model_name, self.args.backbone)
         data['bg_seg'] = to_np_no_norm(data['bg_seg'])
         return data
-
-
-def get_obj_mask(obj_path):
-    obj_masks = np.load(obj_path)
-    # obj_masks = list(seg_dict.values())
+                            
+def get_obj_mask(obj_masks):
     if obj_masks.shape[0] == 0:
         obj_masks = torch.zeros([64, 32, 96], dtype=torch.int32)
     else:
@@ -506,44 +142,9 @@ def get_obj_mask(obj_path):
     return obj_masks
 
 
-def scale(image, scale=2.0, model_name=None):
-
-    if scale == -1.0:
-        (width, height) = (224, 224)
-    else:
-        (width, height) = (int(image.width // scale), int(image.heighft // scale))
-    # (width, height) = (int(image.width // scale), int(image.height // scale))
-    im_resized = image.resize((width, height), Image.ANTIALIAS)
-
-    return im_resized
-
-
-
-def to_np(v, model_name, backbone):
-    if backbone != 'inception':
-        transform = transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize(mean=[0.45, 0.45, 0.45], std=[0.225, 0.225, 0.225])])
-    else:
-        transform = transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-    for i, _ in enumerate(v):
-        v[i] = transform(v[i])
-    return v
-
-def to_np_no_norm(v):
-    transform = transforms.Compose([
-                transforms.ToTensor(),
-                ])
-    for i, _ in enumerate(v):
-        v[i] = transform(v[i])
-    return v
 
 def get_labels(args, gt, num_slots=64):   
     num_class = 64
-    model_name = args.model_name
-    allocated_slot = args.allocated_slot
     agent_label = gt['agents']
     ego_label = gt['ego']
 
@@ -583,12 +184,41 @@ def get_labels(args, gt, num_slots=64):
 
     ego_label = torch.tensor(ego_label)
     agent_label = torch.FloatTensor(agent_label)
-    proposal_train_label = []
-    if ('slot' in model_name and not allocated_slot) or 'ARG'in model_name or 'ORN'in model_name:
-        proposal_train_label = matches = [x for x in agent_label if x > 0]
-        while (len(proposal_train_label)!= num_slots):
-            proposal_train_label.append(num_class)
-        proposal_train_label = torch.LongTensor(proposal_train_label)
-        return proposal_train_label, ego_label, agent_label
+    return ego_label, agent_label
+
+
+def scale(image, scale=2.0, model_name=None):
+
+    if scale == -1.0:
+        (width, height) = (224, 224)
     else:
-        return ego_label, agent_label
+        (width, height) = (int(image.width // scale), int(image.heighft // scale))
+    # (width, height) = (int(image.width // scale), int(image.height // scale))
+    im_resized = image.resize((width, height), Image.ANTIALIAS)
+
+    return im_resized
+
+
+
+def to_np(v, model_name, backbone):
+    if backbone != 'inception':
+        transform = transforms.Compose([
+                        transforms.ToTensor(),
+                        transforms.Normalize(mean=[0.45, 0.45, 0.45], std=[0.225, 0.225, 0.225])])
+    else:
+        transform = transforms.Compose([
+                        transforms.ToTensor(),
+                        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    for i, _ in enumerate(v):
+        v[i] = transform(v[i])
+    return v
+
+def to_np_no_norm(v):
+    transform = transforms.Compose([
+                transforms.ToTensor(),
+                ])
+    for i, _ in enumerate(v):
+        v[i] = transform(v[i])
+    return v
+
+
