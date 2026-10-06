@@ -268,6 +268,9 @@ class Engine(object):
 
         self.train_loss.append(loss_epoch)
 
+        # Tính toán % tiến trình của Train Epoch
+        train_progress_pct = ((self.cur_epoch + 1) / float(self.args.epochs)) * 100.0
+
         train_metrics = {
             "train/loss": loss_epoch,
             "train/actor_loss": actor_loss,
@@ -275,6 +278,7 @@ class Engine(object):
             "train/ego_acc": ego_acc,
             "train/mAP": float(mAP),
             "train/lr": lr_current,
+            "progress/train_pct": train_progress_pct,  # Đồ thị % tiến độ train
             **{f"tracking/{k}": v for k, v in tracking_avg.items()}
         }
 
@@ -285,18 +289,23 @@ class Engine(object):
                 "Ego Loss": ego_loss,
                 "Ego Accuracy": f"{ego_acc * 100:.2f}%",
                 "Actor mAP": f"{mAP:.4f}",
-                "Learning Rate": f"{lr_current:.2e}"
+                "Learning Rate": f"{lr_current:.2e}",
+                "Train Progress": f"{train_progress_pct:.2f}%"
             }, title="Training Summary")
 
             display_metrics_table(self.cur_epoch, tracking_avg, title="Training Tracking")
 
-            # Log riêng cho Accelerate (TensorBoard nếu không bật wandb)
+            # TensorBoard qua Accelerate
             if not getattr(self.args, "wandb", False):
                 self.accelerator.log(train_metrics, step=self.cur_epoch)
 
-            # Log riêng cho WandB Run độc lập
+            # WandB độc lập
             if getattr(self.args, "wandb", False) and wandb.run is not None:
                 wandb.log(train_metrics, step=self.cur_epoch)
+
+            # TensorBoard SummaryWriter (nếu có writer thủ công)
+            if self.writer:
+                self.writer.add_scalar('progress/train_pct', train_progress_pct, self.cur_epoch)
 
         self.cur_epoch += 1
 
@@ -329,6 +338,9 @@ class Engine(object):
                 self.best_mAP = mAP
                 save_cp = True
 
+            # Tính toán % tiến trình của Val Epoch (theo tổng số epochs)
+            val_progress_pct = (self.cur_epoch / float(self.args.epochs)) * 100.0
+
             val_metrics = {
                 "val/loss": total_loss,
                 "val/mAP": float(mAP),
@@ -339,7 +351,8 @@ class Engine(object):
                 "val/p_mAP": float(p_mAP),
                 "val/group_p_mAP": float(group_p_mAP),
                 "val/ego_acc": float(ego_acc),
-                "val/best_mAP": float(self.best_mAP)
+                "val/best_mAP": float(self.best_mAP),
+                "progress/val_pct": val_progress_pct  # Đồ thị % tiến độ validation
             }
 
             if self.accelerator.is_main_process:
@@ -352,20 +365,22 @@ class Engine(object):
                     "b+_mAP": float(group_b_mAP),
                     "p_mAP (Peds)": float(p_mAP),
                     "p+_mAP": float(group_p_mAP),
-                    "Best mAP": float(self.best_mAP)
+                    "Best mAP": float(self.best_mAP),
+                    "Val Progress": f"{val_progress_pct:.2f}%"
                 }, title="Validation Evaluation")
 
-                # Log riêng cho Accelerate (TensorBoard)
+                # TensorBoard qua Accelerate
                 if not getattr(self.args, "wandb", False):
                     self.accelerator.log(val_metrics, step=self.cur_epoch - 1)
 
-                # Log riêng cho WandB Run
+                # WandB độc lập
                 if getattr(self.args, "wandb", False) and wandb.run is not None:
                     wandb.log(val_metrics, step=self.cur_epoch - 1)
 
                 if self.writer:
                     self.writer.add_scalar('val/mAP', mAP, self.cur_epoch - 1)
                     self.writer.add_scalar('val/loss', total_loss, self.cur_epoch - 1)
+                    self.writer.add_scalar('progress/val_pct', val_progress_pct, self.cur_epoch - 1)
 
                 with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
                     f.write(f"epoch: {self.cur_epoch - 1}\nbest mAP: {self.best_mAP:.4f}\nmAP: {mAP:.4f}\n")
@@ -396,7 +411,6 @@ if __name__ == '__main__':
     seq_len = args.seq_len
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
-    # Nếu không có args.wandb -> Accelerate log bằng tensorboard
     use_wandb = getattr(args, "wandb", False)
     log_with = None if use_wandb else "tensorboard"
     accelerator = Accelerator(
@@ -419,7 +433,6 @@ if __name__ == '__main__':
         writer = SummaryWriter(log_dir=logdir)
         lmdb_train_path, lmdb_val_path = put_into_working()
 
-        # Khởi tạo WandB Run độc lập hoàn toàn nếu có cờ args.wandb
         if use_wandb:
             wandb.init(
                 project=os.environ.get("WANDB_PROJECT", getattr(args, "wandb_project", "action_slot")),
@@ -432,7 +445,6 @@ if __name__ == '__main__':
 
     accelerator.wait_for_everyone()
 
-    # Nếu dùng Accelerate TensorBoard tracker thì khởi tạo qua accelerator.init_trackers
     if not use_wandb and accelerator.is_main_process:
         accelerator.init_trackers(
             project_name="runs",
