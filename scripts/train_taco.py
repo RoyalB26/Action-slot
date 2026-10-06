@@ -12,7 +12,7 @@ import logging
 import argparse
 import json
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from PIL import Image
 import matplotlib.pyplot as plt
 from sklearn.metrics import average_precision_score
@@ -23,7 +23,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
+from accelerate import Accelerator
+from accelerate.utils import DistributedDataParallelKwargs
 # --- Hugging Face Accelerate & WandB ---
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -397,9 +398,8 @@ if __name__ == '__main__':
 
     args, logdir = parser()
     seq_len = args.seq_len
-
-    # Khởi tạo Accelerate
-    accelerator = Accelerator(log_with="wandb")
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs], log_with="wandb")
 
     logdir = logdir.replace(':', '_').replace('\n', '_').replace(" ", "")
     abs_logdir = os.path.abspath(logdir)
