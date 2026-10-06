@@ -125,7 +125,7 @@ class TACO(Dataset):
                         bg = Image.open(io.BytesIO(sample["bg"])).convert("L")
                         data["bg_seg"].append(bg)
                     else:
-                        raise Exception(f"bg at {index} - {idx} is None")
+                        data["bg_seg"].append(data["bg_seg"][-1])
 
                 if self.args.obj_mask:
                     if frame_idx % self.args.mask_every_frame == 0 or (
