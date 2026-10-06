@@ -51,9 +51,6 @@ def parser():
     parser.add_argument('--parallel', help="", action="store_true")
     parser.add_argument('--tune_block_idx', type=int, default=[0,1,2,-3,-2,-1],nargs='+')
     parser.add_argument('--wandb', action="store_true", help='Enable Weights & Biases logging and disable tqdm')
-    parser.add_argument("--stage1_epochs", type=int, default=30, help="Số epochs chạy Supervised trước khi bật GRPO")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Đường dẫn file .pth để nạp checkpoint")
-    parser.add_argument("--start_stage2", action="store_true", help="Bật cờ này nếu muốn nạp model Stage 1 và vào thẳng Stage 2 với LR 1e-5")
     parser.add_argument("--start_epoch", type=int, default=0)
     # eval
     parser.add_argument('--model_index', type=int, default=-1)

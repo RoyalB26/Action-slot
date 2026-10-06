@@ -25,12 +25,10 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from accelerate import Accelerator
 from accelerate.utils import DistributedDataParallelKwargs
-# --- Hugging Face Accelerate & WandB ---
-from accelerate import Accelerator
 from accelerate.logging import get_logger
 import wandb
 
-# --- Rich formatting (tùy chọn hiển thị console đẹp) ---
+# --- Rich formatting ---
 try:
     from rich.console import Console
     from rich.table import Table
@@ -45,6 +43,7 @@ from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
 from put_lmdb import *
+
 
 def display_metrics_table(epoch, metrics_dict, title="Epoch Summary"):
     """In bảng kết quả chuyên nghiệp ra console."""
@@ -63,7 +62,7 @@ def display_metrics_table(epoch, metrics_dict, title="Epoch Summary"):
         print(f"\n===== {title} - Epoch {epoch} =====")
         for k, v in metrics_dict.items():
             val_str = f"{v:.4f}" if isinstance(v, float) else str(v)
-            print(f"  {k:<24}: {val_str}")
+            print(f" {k:<24}: {val_str}")
         print("=" * 35)
 
 
@@ -248,15 +247,8 @@ class Engine(object):
 
         lr_current = self.scheduler.get_last_lr()[0] if self.scheduler is not None else self.optimizer.param_groups[0]['lr']
 
-        # progress_bar = tqdm(
-        #     dataloader_train,
-        #     desc=f"Epoch {self.cur_epoch:03d} [Train]",
-        #     disable=not self.accelerator.is_local_main_process,
-        #     leave=False
-        # )
         for data in dataloader_train:
             self.step(data, 'train')
-            # progress_bar.set_postfix({"loss": f"{self.loss_epoch / max(1, progress_bar.n):.4f}"})
 
         if self.scheduler is not None:
             self.scheduler.step()
@@ -276,7 +268,6 @@ class Engine(object):
 
         self.train_loss.append(loss_epoch)
 
-        # Logging
         train_metrics = {
             "train/loss": loss_epoch,
             "train/actor_loss": actor_loss,
@@ -299,7 +290,13 @@ class Engine(object):
 
             display_metrics_table(self.cur_epoch, tracking_avg, title="Training Tracking")
 
-            self.accelerator.log(train_metrics, step=self.cur_epoch)
+            # Log riêng cho Accelerate (TensorBoard nếu không bật wandb)
+            if not getattr(self.args, "wandb", False):
+                self.accelerator.log(train_metrics, step=self.cur_epoch)
+
+            # Log riêng cho WandB Run độc lập
+            if getattr(self.args, "wandb", False) and wandb.run is not None:
+                wandb.log(train_metrics, step=self.cur_epoch)
 
         self.cur_epoch += 1
 
@@ -309,12 +306,6 @@ class Engine(object):
         num_batches = len(dataloader_val)
 
         with torch.no_grad():
-            # progress_bar = tqdm(
-            #     dataloader_val,
-            #     desc=f"Epoch {self.cur_epoch - 1:03d} [Val]",
-            #     disable=not self.accelerator.is_local_main_process,
-            #     leave=False
-            # )
             for data in dataloader_val:
                 self.step(data, 'val')
 
@@ -364,13 +355,18 @@ class Engine(object):
                     "Best mAP": float(self.best_mAP)
                 }, title="Validation Evaluation")
 
-                self.accelerator.log(val_metrics, step=self.cur_epoch - 1)
+                # Log riêng cho Accelerate (TensorBoard)
+                if not getattr(self.args, "wandb", False):
+                    self.accelerator.log(val_metrics, step=self.cur_epoch - 1)
+
+                # Log riêng cho WandB Run
+                if getattr(self.args, "wandb", False) and wandb.run is not None:
+                    wandb.log(val_metrics, step=self.cur_epoch - 1)
 
                 if self.writer:
                     self.writer.add_scalar('val/mAP', mAP, self.cur_epoch - 1)
                     self.writer.add_scalar('val/loss', total_loss, self.cur_epoch - 1)
 
-                # Lưu log ra file text
                 with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
                     f.write(f"epoch: {self.cur_epoch - 1}\nbest mAP: {self.best_mAP:.4f}\nmAP: {mAP:.4f}\n")
                     f.write(f"c_mAP: {c_mAP:.4f} | b_mAP: {b_mAP:.4f} | p_mAP: {p_mAP:.4f}\n{'*'*25}\n")
@@ -399,40 +395,56 @@ if __name__ == '__main__':
     args, logdir = parser()
     seq_len = args.seq_len
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs], log_with="wandb")
+
+    # Nếu không có args.wandb -> Accelerate log bằng tensorboard
+    use_wandb = getattr(args, "wandb", False)
+    log_with = None if use_wandb else "tensorboard"
+    accelerator = Accelerator(
+        kwargs_handlers=[ddp_kwargs],
+        log_with=log_with,
+        project_dir=logdir if not use_wandb else None
+    )
 
     logdir = logdir.replace(':', '_').replace('\n', '_').replace(" ", "")
     abs_logdir = os.path.abspath(logdir)
     if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
         abs_logdir = f'\\\\?\\{abs_logdir}'
     logdir = abs_logdir
+
     lmdb_train_path = "/kaggle/working/taco_train.lmdb"
     lmdb_val_path = "/kaggle/working/taco_val.lmdb"
+
     if accelerator.is_main_process:
         os.makedirs(logdir, exist_ok=True)
         writer = SummaryWriter(log_dir=logdir)
-        lmdb_train_path, lmdb_val_path= put_into_working()
+        lmdb_train_path, lmdb_val_path = put_into_working()
+
+        # Khởi tạo WandB Run độc lập hoàn toàn nếu có cờ args.wandb
+        if use_wandb:
+            wandb.init(
+                project=os.environ.get("WANDB_PROJECT", getattr(args, "wandb_project", "action_slot")),
+                name=os.path.basename(logdir),
+                config=vars(args),
+                mode="online"
+            )
     else:
         writer = None
+
     accelerator.wait_for_everyone()
+
+    # Nếu dùng Accelerate TensorBoard tracker thì khởi tạo qua accelerator.init_trackers
+    if not use_wandb and accelerator.is_main_process:
+        accelerator.init_trackers(
+            project_name="runs",
+            config=vars(args)
+        )
+
     num_ego_class = 4
     num_actor_class = 64
-    accelerator.init_trackers(
-            project_name=os.environ.get(
-                "WANDB_PROJECT", getattr(args, "wandb_project", "action_slot")
-            ),
-            config=vars(args),
-            init_kwargs={
-                "wandb": {
-                    "name": os.path.basename(logdir),
-                    "mode": "online",
-                }
-            },
-        )
+
     # Dataloaders
-    
-    train_set = TACO(args,lmdb_train_path, lmdb_val_path, split='train')
-    val_set = TACO(args,lmdb_train_path, lmdb_val_path, split='val')
+    train_set = TACO(args, lmdb_train_path, lmdb_val_path, split='train')
+    val_set = TACO(args, lmdb_train_path, lmdb_val_path, split='val')
 
     dataloader_train = DataLoader(
         train_set, batch_size=args.batch_size, shuffle=True,
@@ -480,6 +492,9 @@ if __name__ == '__main__':
             result_list.append(res)
 
     if accelerator.is_main_process:
-        accelerator.end_training()
+        if not use_wandb:
+            accelerator.end_training()
+        if use_wandb and wandb.run is not None:
+            wandb.finish()
         if len(result_list) > 0:
             plot_result(np.array(result_list), args)
