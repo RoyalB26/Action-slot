@@ -297,8 +297,7 @@ class Engine(object):
                 "Learning Rate": f"{lr_current:.2e}"
             }, title="Training Summary")
 
-            if wandb.run is not None:
-                wandb.log(train_metrics, step=self.cur_epoch)
+            self.accelerator.log(train_metrics, step=self.cur_epoch)
 
         self.cur_epoch += 1
 
