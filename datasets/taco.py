@@ -125,7 +125,7 @@ class TACO(Dataset):
                         bg = Image.open(io.BytesIO(sample["bg"])).convert("L")
                         data["bg_seg"].append(bg)
                     else:
-                        data["bg_seg"].append(data["bg_seg"][-1])
+                        pass
 
                 if self.args.obj_mask:
                     if frame_idx % self.args.mask_every_frame == 0 or (
@@ -134,9 +134,14 @@ class TACO(Dataset):
                         npy_array = np.load(io.BytesIO(sample["npy"]))
                         data["obj_masks"].append(get_obj_mask(npy_array))
 
+        while len(data["bg_seg"]) < len(data["videos"]):
+            data['bg_seg'].append(data['bg_seg'][-1])
+
         data["videos"] = to_np(
             data["videos"], self.args.model_name, self.args.backbone
         )
+        
+
         data["bg_seg"] = to_np_no_norm(data["bg_seg"])
 
         # Đảm bảo obj_masks cũng được stack thành tensor nếu có sử dụng
