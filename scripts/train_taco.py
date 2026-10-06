@@ -248,15 +248,15 @@ class Engine(object):
 
         lr_current = self.scheduler.get_last_lr()[0] if self.scheduler is not None else self.optimizer.param_groups[0]['lr']
 
-        progress_bar = tqdm(
-            dataloader_train,
-            desc=f"Epoch {self.cur_epoch:03d} [Train]",
-            disable=not self.accelerator.is_local_main_process,
-            leave=False
-        )
-        for data in progress_bar:
+        # progress_bar = tqdm(
+        #     dataloader_train,
+        #     desc=f"Epoch {self.cur_epoch:03d} [Train]",
+        #     disable=not self.accelerator.is_local_main_process,
+        #     leave=False
+        # )
+        for data in dataloader_train:
             self.step(data, 'train')
-            progress_bar.set_postfix({"loss": f"{self.loss_epoch / max(1, progress_bar.n):.4f}"})
+            # progress_bar.set_postfix({"loss": f"{self.loss_epoch / max(1, progress_bar.n):.4f}"})
 
         if self.scheduler is not None:
             self.scheduler.step()
@@ -308,13 +308,13 @@ class Engine(object):
         num_batches = len(dataloader_val)
 
         with torch.no_grad():
-            progress_bar = tqdm(
-                dataloader_val,
-                desc=f"Epoch {self.cur_epoch - 1:03d} [Val]",
-                disable=not self.accelerator.is_local_main_process,
-                leave=False
-            )
-            for data in progress_bar:
+            # progress_bar = tqdm(
+            #     dataloader_val,
+            #     desc=f"Epoch {self.cur_epoch - 1:03d} [Val]",
+            #     disable=not self.accelerator.is_local_main_process,
+            #     leave=False
+            # )
+            for data in dataloader_val:
                 self.step(data, 'val')
 
             map_pred = np.concatenate(self.map_pred_actor_list, axis=0).reshape(-1, self.num_actor_class)
@@ -363,8 +363,7 @@ class Engine(object):
                     "Best mAP": float(self.best_mAP)
                 }, title="Validation Evaluation")
 
-                if wandb.run is not None:
-                    wandb.log(val_metrics, step=self.cur_epoch - 1)
+                self.accelerator.log(val_metrics, step=self.cur_epoch - 1)
 
                 if self.writer:
                     self.writer.add_scalar('val/mAP', mAP, self.cur_epoch - 1)
