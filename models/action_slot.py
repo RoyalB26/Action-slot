@@ -461,9 +461,14 @@ class ACTION_SLOT(nn.Module):
       )  # Càng thấp (<0.40) chứng tỏ đã thoát bẫy ngã tư
 
       # 2. Early Frame Responsiveness (Tỷ lệ năng lượng chú ý ở 4 frame đầu)
+        # Chuẩn hóa ma trận của từng slot về tổng = 1 trên toàn bộ không-thời gian
+      slot_attn_norm = attn_spatial / (
+        attn_spatial.sum(dim=(2, 3, 4), keepdim=True) + 1e-6
+      )
+        # Lúc này năng lượng 4 frame đầu của từng slot mới phản ánh độ nhạy thực sự:
       early_energy = (
-          attn_spatial[:, :, :4].sum() / (attn_spatial.sum() + 1e-6)
-      ).item()
+        slot_attn_norm[:, :, :4].sum(dim=(2, 3, 4)).mean().item()
+      )  
 
       # 3. Temporal Attention Peak Index (Khám phá frame nào được chú ý nhất cho mỗi slot)
       # temp_weights: [B, num_actor_class, T]
