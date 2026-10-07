@@ -106,7 +106,7 @@ class TACO(Dataset):
 
         start_idx = self.videos_list[index]
         seq_len = getattr(self.args, "seq_len", 16)
-
+        bg_w, bg_h= 96,32
         with self.env.begin() as txn:
             for frame_idx in range(seq_len):
                 idx = start_idx + frame_idx
@@ -132,8 +132,9 @@ class TACO(Dataset):
                         elif len(data["bg_seg"]) > 0:
                             data["bg_seg"].append(data["bg_seg"][-1])
                         else:
+                            # Nếu ngay frame đầu tiên bị None, tạo mask đen hoàn toàn cùng size với RGB frame
                             w, h = frame.size
-                            bg = Image.new("L", (w, h), 0)
+                            bg = Image.new("L", (bg_w, bg_h), 0)
                             data["bg_seg"].append(bg)
 
                     if self.args.obj_mask:
