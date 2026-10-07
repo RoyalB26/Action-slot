@@ -324,18 +324,18 @@ class ACTION_SLOT(nn.Module):
                 b, self.num_slots, new_seq_len, new_h, new_w
             )
 
-        # 1. Spatial Center Entropy (Đo mức độ dồn cục vào tâm ngã tư)
-        # Tâm ngã tư: H in [2, 6], W in [6, 18]
-        center_mass = attn_spatial[:, :, :, 2:6, 6:18].sum(dim=(-2, -1))
-        total_mass = attn_spatial.sum(dim=(-2, -1)) + 1e-6
-        center_ratio = (
-            (center_mass / total_mass).mean().item()
-        )  # Càng thấp (<0.40) chứng tỏ đã thoát bẫy ngã tư
+            # 1. Spatial Center Entropy (Đo mức độ dồn cục vào tâm ngã tư)
+            # Tâm ngã tư: H in [2, 6], W in [6, 18]
+            center_mass = attn_spatial[:, :, :, 2:6, 6:18].sum(dim=(-2, -1))
+            total_mass = attn_spatial.sum(dim=(-2, -1)) + 1e-6
+            center_ratio = (
+                (center_mass / total_mass).mean().item()
+            )  # Càng thấp (<0.40) chứng tỏ đã thoát bẫy ngã tư
 
-        # 2. Early Frame Responsiveness (Tỷ lệ năng lượng chú ý ở 4 frame đầu)
-        early_energy = (
-            attn_spatial[:, :, :4].sum() / (attn_spatial.sum() + 1e-6)
-        ).item()
+            # 2. Early Frame Responsiveness (Tỷ lệ năng lượng chú ý ở 4 frame đầu)
+            early_energy = (
+                attn_spatial[:, :, :4].sum() / (attn_spatial.sum() + 1e-6)
+            ).item()
 
 
         tracking_stats = {
