@@ -104,38 +104,46 @@ class TACO(Dataset):
         data['variants'] = self.variants[index]
         data['map'] = self.maps[index]
 
-        for frame_idx, idx in enumerate(range(index, index + 16)):
-            with self.env.begin() as txn:
+        start_idx = self.videos_list[index]
+        seq_len = getattr(self.args, "seq_len", 16)
+
+        with self.env.begin() as txn:
+            for frame_idx in range(seq_len):
+                idx = start_idx + frame_idx
                 raw_data = txn.get(f"{idx:08d}".encode("ascii"))
+                if raw_data is None:
+                    continue
                 sample = pickle.loads(raw_data)
 
-            frame = Image.open(io.BytesIO(sample["frame"])).convert("RGB")
-            data["videos"].append(frame)
+                frame = Image.open(io.BytesIO(sample["frame"])).convert("RGB")
+                data["videos"].append(frame)
 
-            if self.args.plot:
-                data["raw"].append(frame)
+                if self.args.plot:
+                    data["raw"].append(frame)
 
-            if self.split == "train" or self.split == "val":
-                # Kiểm tra theo frame_idx (cục bộ từ 0 -> 16), KHÔNG dùng idx
-                if (
-                    self.args.bg_mask
-                    and frame_idx % self.args.mask_every_frame == 0
-                ):
-                    if sample["bg"] is not None:
-                        bg = Image.open(io.BytesIO(sample["bg"])).convert("L")
-                        data["bg_seg"].append(bg)
-                    else:
-                        pass
-
-                if self.args.obj_mask:
-                    if frame_idx % self.args.mask_every_frame == 0 or (
-                        self.args.plot and self.args.plot_mode == ""
+                if self.split in ["train", "val"]:
+                    if (
+                        self.args.bg_mask
+                        and frame_idx % self.args.mask_every_frame == 0
                     ):
-                        npy_array = np.load(io.BytesIO(sample["npy"]))
-                        data["obj_masks"].append(get_obj_mask(npy_array))
+                        if sample.get("bg") is not None:
+                            bg = Image.open(io.BytesIO(sample["bg"])).convert("L")
+                            data["bg_seg"].append(bg)
+                        elif len(data["bg_seg"]) > 0:
+                            data["bg_seg"].append(data["bg_seg"][-1])
+                        else:
+                            w, h = frame.size
+                            bg = Image.new("L", (w, h), 0)
+                            data["bg_seg"].append(bg)
 
-        while len(data["bg_seg"]) < len(data["videos"]):
-            data['bg_seg'].append(data['bg_seg'][-1])
+                    if self.args.obj_mask:
+                        if frame_idx % self.args.mask_every_frame == 0 or (
+                            self.args.plot and self.args.plot_mode == ""
+                        ):
+                            if sample.get("npy") is not None:
+                                npy_array = np.load(io.BytesIO(sample["npy"]))
+                                data["obj_masks"].append(get_obj_mask(npy_array))
+
 
         data["videos"] = to_np(
             data["videos"], self.args.model_name, self.args.backbone
