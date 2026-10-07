@@ -321,7 +321,7 @@ class ACTION_SLOT(nn.Module):
         with torch.no_grad():
             # raw_attn: [B, S, T*H*W] -> [B, S, T, H, W]
             attn_spatial = attn_masks[:, : self.num_slots].view(
-                b, n, seq_len, h, w
+                b, n, new_seq_len, new_h, new_w
             )
 
         # 1. Spatial Center Entropy (Đo mức độ dồn cục vào tâm ngã tư)
