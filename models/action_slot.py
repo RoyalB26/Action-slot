@@ -341,7 +341,7 @@ class ACTION_SLOT(nn.Module):
             tracking_stats = {
                 'center_bias_ratio': center_ratio,  # Nếu > 0.70 là bị bẫy ngã tư; mong muốn ~ 0.35 - 0.45
                 'early_frame_energy': early_energy,  # Nếu < 0.10 là bị mù frame đầu; mong muốn ~ 0.20 - 0.30
-                'avg_peak_frame': '',  # Cho biết model tập trung nhất ở frame thứ mấy
+                'avg_peak_frame': 0,  # Cho biết model tập trung nhất ở frame thứ mấy
                 #   'temp_weights': (
                 #       temp_weights.detach()
                 #   ),  # Dùng để visualize biểu đồ frame 1->16
