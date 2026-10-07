@@ -338,14 +338,14 @@ class ACTION_SLOT(nn.Module):
             ).item()
 
 
-        tracking_stats = {
-            'center_bias_ratio': center_ratio,  # Nếu > 0.70 là bị bẫy ngã tư; mong muốn ~ 0.35 - 0.45
-            'early_frame_energy': early_energy,  # Nếu < 0.10 là bị mù frame đầu; mong muốn ~ 0.20 - 0.30
-            'avg_peak_frame': '',  # Cho biết model tập trung nhất ở frame thứ mấy
-            #   'temp_weights': (
-            #       temp_weights.detach()
-            #   ),  # Dùng để visualize biểu đồ frame 1->16
-        }
+            tracking_stats = {
+                'center_bias_ratio': center_ratio,  # Nếu > 0.70 là bị bẫy ngã tư; mong muốn ~ 0.35 - 0.45
+                'early_frame_energy': early_energy,  # Nếu < 0.10 là bị mù frame đầu; mong muốn ~ 0.20 - 0.30
+                'avg_peak_frame': '',  # Cho biết model tập trung nhất ở frame thứ mấy
+                #   'temp_weights': (
+                #       temp_weights.detach()
+                #   ),  # Dùng để visualize biểu đồ frame 1->16
+            }
 
         attn_masks = attn_masks.reshape(b, n, -1)
         attn_masks = attn_masks.view(b, n, new_seq_len, self.resolution[0], self.resolution[1])
