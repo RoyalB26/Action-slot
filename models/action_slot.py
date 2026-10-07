@@ -316,9 +316,37 @@ class ACTION_SLOT(nn.Module):
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1))
         
         x, attn_masks = self.slot_attention(x)
-
         # no pool, 3d slot
         b, n, thw = attn_masks.shape
+        with torch.no_grad():
+            # raw_attn: [B, S, T*H*W] -> [B, S, T, H, W]
+            attn_spatial = attn_masks[:, : self.num_slots].view(
+                b, n, seq_len, h, w
+            )
+
+        # 1. Spatial Center Entropy (Đo mức độ dồn cục vào tâm ngã tư)
+        # Tâm ngã tư: H in [2, 6], W in [6, 18]
+        center_mass = attn_spatial[:, :, :, 2:6, 6:18].sum(dim=(-2, -1))
+        total_mass = attn_spatial.sum(dim=(-2, -1)) + 1e-6
+        center_ratio = (
+            (center_mass / total_mass).mean().item()
+        )  # Càng thấp (<0.40) chứng tỏ đã thoát bẫy ngã tư
+
+        # 2. Early Frame Responsiveness (Tỷ lệ năng lượng chú ý ở 4 frame đầu)
+        early_energy = (
+            attn_spatial[:, :, :4].sum() / (attn_spatial.sum() + 1e-6)
+        ).item()
+
+
+        tracking_stats = {
+            'center_bias_ratio': center_ratio,  # Nếu > 0.70 là bị bẫy ngã tư; mong muốn ~ 0.35 - 0.45
+            'early_frame_energy': early_energy,  # Nếu < 0.10 là bị mù frame đầu; mong muốn ~ 0.20 - 0.30
+            'avg_peak_frame': '',  # Cho biết model tập trung nhất ở frame thứ mấy
+            #   'temp_weights': (
+            #       temp_weights.detach()
+            #   ),  # Dùng để visualize biểu đồ frame 1->16
+        }
+
         attn_masks = attn_masks.reshape(b, n, -1)
         attn_masks = attn_masks.view(b, n, new_seq_len, self.resolution[0], self.resolution[1])
         attn_masks = attn_masks.unsqueeze(-1)
@@ -343,7 +371,7 @@ class ACTION_SLOT(nn.Module):
         if self.num_ego_class != 0:
             ego_x = self.drop(ego_x)
             ego_x, x = self.head(x, ego_x)
-            return ego_x, x, attn_masks
+            return ego_x, x, attn_masks, tracking_stats
         else:
             x = self.head(x)
-            return x, attn_masks
+            return x, attn_masks, tracking_stats

@@ -5,3 +5,4 @@
 scripts/.DS_Store
 taco_log/
 wandb/
+tmp/
