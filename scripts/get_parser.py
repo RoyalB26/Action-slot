@@ -52,6 +52,7 @@ def parser():
     parser.add_argument('--tune_block_idx', type=int, default=[0,1,2,-3,-2,-1],nargs='+')
     parser.add_argument('--wandb', action="store_true", help='Enable Weights & Biases logging and disable tqdm')
     parser.add_argument("--start_epoch", type=int, default=0)
+    parser.add_argument("--print_every", type=int, default= 1)
     # eval
     parser.add_argument('--model_index', type=int, default=-1)
     parser.add_argument('--cp', type=str, default='best_model.pth')

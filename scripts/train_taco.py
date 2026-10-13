@@ -1,97 +1,73 @@
 import sys
 sys.path.append('../')
 
-import warnings
-warnings.filterwarnings('ignore')
-import os
-os.environ['PYTHONWARNINGS'] = 'ignore'
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-
-import math
-import logging
 import argparse
 import json
-import numpy as np
-from tqdm.auto import tqdm
+import os
 from PIL import Image
+import numpy as np
+from get_parser import parser
+import math
 import matplotlib.pyplot as plt
+import logging
 from sklearn.metrics import average_precision_score
+from scipy.optimize import linear_sum_assignment
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+import torch.nn.functional as F
+import torch.nn as nn
+
 from accelerate import Accelerator
-from accelerate.utils import DistributedDataParallelKwargs
 from accelerate.logging import get_logger
 import wandb
 
-# --- Rich formatting ---
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    console = Console()
-except ImportError:
-    console = None
+torch.backends.cudnn.benchmark = True
 
-from get_parser import parser
 from datasets.taco import TACO
 from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
-from put_lmdb import *
+import time
+import warnings
 
+# Suppress Python standard warnings (sklearn, PyTorch user warnings, etc.)
+warnings.filterwarnings('ignore')
 
-def display_metrics_table(epoch, metrics_dict, title="Epoch Summary"):
-    """In bảng kết quả chuyên nghiệp ra console."""
-    if console is not None:
-        table = Table(title=f"[bold cyan]{title} - Epoch {epoch}[/bold cyan]", show_header=True, header_style="bold magenta")
-        table.add_column("Chỉ số (Metric)", style="dim", width=26)
-        table.add_column("Giá trị", justify="right", style="green")
+# Suppress native C++/CUDA and Hugging Face library-level warnings
+os.environ['PYTHONWARNINGS'] = 'ignore'
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
 
-        for k, v in metrics_dict.items():
-            if isinstance(v, float):
-                table.add_row(k, f"{v:.4f}")
-            else:
-                table.add_row(k, str(v))
-        console.print(table)
-    else:
-        print(f"\n===== {title} - Epoch {epoch} =====")
-        for k, v in metrics_dict.items():
-            val_str = f"{v:.4f}" if isinstance(v, float) else str(v)
-            print(f" {k:<24}: {val_str}")
-        print("=" * 35)
+logger = get_logger(__name__)
 
 
 def plot_result(result, args):
-    """result: mAP, loss"""
+    """
+    result : [mAP, loss]
+    """
     text = ["mAP", "loss"]
     x = [i + 1 for i in range(0, args.epochs, args.val_every)]
-    x = x if (len(x) > 0 and x[-1] == args.epochs) else x + [args.epochs]
+    x = x if x[-1] == args.epochs else x + [args.epochs]
     fig, ax = plt.subplots(2, 1, figsize=(10, 6))
-
     for i in range(2):
         ax[i].plot(x, result[:, i])
-        ax[i].title.set_text(text[i])
-        ax[i].grid(True)
-    plt.tight_layout()
+        ax[i].set_title(text[i])
     plt.show()
 
 
 def lambda_lr(epoch):
     if epoch < 11:
-        return math.pow(1.1, epoch)
+        lr = math.pow(1.1, epoch)
     else:
-        return math.pow(0.7, int(epoch / 3))
+        lr = math.pow(0.7, int(epoch / 3))
+    return lr
 
 
 def set_lr(model):
-    unwrapped = model.module if hasattr(model, 'module') else model
-    params = list(filter(lambda kv: kv[0].startswith("head"), unwrapped.named_parameters()))
-    base_params = list(filter(lambda kv: not kv[0].startswith("head"), unwrapped.named_parameters()))
+    target_model = getattr(model, "module", model)
+    params = list(filter(lambda kv: kv[0].startswith("head"), target_model.named_parameters()))
+    base_params = list(filter(lambda kv: not kv[0].startswith("head"), target_model.named_parameters()))
     return [
         {'params': [temp[1] for temp in base_params]},
         {'params': [temp[1] for temp in params], 'lr': 2e-2}
@@ -99,15 +75,26 @@ def set_lr(model):
 
 
 class Engine(object):
-    def __init__(self, args, accelerator, model, optimizer, num_actor_class, criterion, scheduler=None, writer=None):
+    """Engine that runs training and inference with Accelerate & WandB."""
+
+    def __init__(self, args, model, optimizer, num_actor_class, accelerator, scheduler=None):
         self.args = args
         self.accelerator = accelerator
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.criterion = criterion
-        self.writer = writer
         self.num_actor_class = num_actor_class
+
+        target_model = getattr(self.model, "module", self.model)
+        if hasattr(target_model, 'resolution'):
+            attention_res = (
+                target_model.resolution[0] * args.bg_upsample,
+                target_model.resolution[1] * args.bg_upsample
+            )
+        else:
+            attention_res = None
+
+        self.criterion = ActionSlotLoss(args, num_actor_class, attention_res).to(self.accelerator.device)
 
         self.cur_epoch = 0
         self.train_loss = []
@@ -127,11 +114,6 @@ class Engine(object):
         self.actor_loss_epoch = 0.
         self.correct_ego = 0
         self.total_ego = 0
-        self.tracking_stats = {
-            'center_bias_ratio': 0.0,
-            'early_frame_energy': 0.0,
-            'avg_peak_frame': 0.0,
-        }
         self.label_actor_list = []
         self.map_pred_actor_list = []
         self.action_inter = AverageMeter()
@@ -140,20 +122,28 @@ class Engine(object):
         self.bg_union = AverageMeter()
 
     def step(self, batch, mode):
+        for k in batch:
+            if isinstance(batch[k], torch.Tensor):
+                batch[k] = batch[k].to(self.accelerator.device)
+
         video_in = batch['videos']
-        inputs = [v.to(dtype=torch.float32) for v in video_in]
+        if self.args.box:
+            box_in = batch['box']
+            if isinstance(box_in, np.ndarray):
+                boxes = torch.from_numpy(box_in).to(self.accelerator.device, dtype=torch.float32)
+            else:
+                boxes = box_in.to(self.accelerator.device, dtype=torch.float32)
+
+        inputs = [video_in[i].to(self.accelerator.device, dtype=torch.float32) for i in range(self.args.seq_len)]
 
         attn = None
         if self.args.box:
-            box_in = batch['box']
-            boxes = torch.from_numpy(box_in).to(self.accelerator.device, dtype=torch.float32) if isinstance(box_in, np.ndarray) else box_in.to(dtype=torch.float32)
             pred_ego, pred_actor = self.model(inputs, boxes)
-            tracking_stats = {k: 0.0 for k in self.tracking_stats}
         else:
             if 'slot' in self.args.model_name or 'mvit' in self.args.model_name:
-                pred_ego, pred_actor, attn, tracking_stats = self.model(inputs)
+                pred_ego, pred_actor, attn = self.model(inputs)
             else:
-                pred_ego, pred_actor, tracking_stats = self.model(inputs)
+                pred_ego, pred_actor = self.model(inputs)
 
         loss_dict = self.criterion(
             {'ego': pred_ego, 'actor': pred_actor, 'attn': attn},
@@ -163,7 +153,7 @@ class Engine(object):
 
         ego_loss = loss_dict['ego']
         if ego_loss is None:
-            ego_loss = torch.tensor(0.0, device=self.accelerator.device)
+            ego_loss = torch.tensor([0.0], device=self.accelerator.device)
         actor_loss = loss_dict['actor']
         action_attn_loss = loss_dict['attn']['attn_loss']
         bg_attn_loss = loss_dict['attn']['bg_attn_loss']
@@ -192,41 +182,37 @@ class Engine(object):
 
         self.loss_epoch += float(loss.item())
 
-        # Prediction evaluation
-        _, pred_ego_cls = torch.max(pred_ego.data, 1)
-        ego = batch['ego']
-        actor = batch['actor']
-
+        _, pred_ego_idx = torch.max(pred_ego.data, 1)
+        ego, actor = batch['ego'], batch['actor']
         self.total_ego += ego.size(0)
-        self.correct_ego += (pred_ego_cls == ego).sum().item()
+        self.correct_ego += (pred_ego_idx == ego).sum().item()
 
         if ('slot' in self.args.model_name and not self.args.allocated_slot) or self.args.box:
-            pred_actor_sm = torch.nn.functional.softmax(pred_actor, dim=-1)
-            _, pred_actor_idx = torch.max(pred_actor_sm.data, -1)
+            pred_actor_prob = torch.nn.functional.softmax(pred_actor, dim=-1)
+            _, pred_actor_idx = torch.max(pred_actor_prob.data, -1)
             pred_actor_idx = pred_actor_idx.detach().cpu().numpy().astype(int)
-            pred_actor_np = pred_actor_sm.detach().cpu().numpy()
+            pred_actor_prob = pred_actor_prob.detach().cpu().numpy()
 
             map_batch_new_pred_actor = []
             for i, b in enumerate(pred_actor_idx):
                 map_new_pred = np.zeros(self.num_actor_class, dtype=np.float32) + 1e-5
                 for j, pred in enumerate(b):
                     if pred != self.num_actor_class:
-                        if pred_actor_np[i, j, pred] > map_new_pred[pred]:
-                            map_new_pred[pred] = pred_actor_np[i, j, pred]
+                        if pred_actor_prob[i, j, pred] > map_new_pred[pred]:
+                            map_new_pred[pred] = pred_actor_prob[i, j, pred]
                 map_batch_new_pred_actor.append(map_new_pred)
 
-            self.map_pred_actor_list.append(np.array(map_batch_new_pred_actor))
-            self.label_actor_list.append(batch['slot_eval_gt'].detach().cpu().numpy())
+            map_batch_new_pred_actor = np.array(map_batch_new_pred_actor)
+            self.map_pred_actor_list.append(map_batch_new_pred_actor)
+            self.label_actor_list.append(batch['slot_eval_gt'].cpu().numpy())
         else:
-            pred_actor_sig = torch.sigmoid(pred_actor)
-            self.map_pred_actor_list.append(pred_actor_sig.detach().cpu().numpy())
+            pred_actor_prob = torch.sigmoid(pred_actor)
+            self.map_pred_actor_list.append(pred_actor_prob.detach().cpu().numpy())
             self.label_actor_list.append(actor.detach().cpu().numpy())
 
-        self.actor_loss_epoch += float(actor_loss.mean().item())
-        self.ego_loss_epoch += float(ego_loss.mean().item())
-        for k in self.tracking_stats:
-            if k in tracking_stats:
-                self.tracking_stats[k] += float(tracking_stats[k])
+        actor_loss_val, ego_loss_val = actor_loss.mean(), ego_loss.mean()
+        self.actor_loss_epoch += float(actor_loss_val.item())
+        self.ego_loss_epoch += float(ego_loss_val.item())
 
         if mode == 'train':
             self.optimizer.zero_grad()
@@ -240,163 +226,326 @@ class Engine(object):
                 self.bg_inter.update(loss_dict['attn']['bg_inter'])
                 self.bg_union.update(loss_dict['attn']['bg_union'])
 
-    def train_epoch(self, dataloader_train):
+    def train(self, dataloader_train):
         self.reset_log()
         self.model.train()
+
+        current_lr = self.optimizer.param_groups[0]['lr']
+        self.accelerator.print(f"Current epoch: {self.cur_epoch}, lr: {current_lr}")
+        logging.info(f"Current epoch: {self.cur_epoch}, lr: {current_lr}")
+
         num_batches = len(dataloader_train)
-
-        lr_current = self.scheduler.get_last_lr()[0] if self.scheduler is not None else self.optimizer.param_groups[0]['lr']
-
-        for data in dataloader_train:
+        start_time = time.time()
+        step_start_time = time.time()
+        prev_loss = 0.0
+        for step_idx, data in enumerate(dataloader_train):
             self.step(data, 'train')
+
+            # Cứ mỗi args.print_every step hoặc batch cuối cùng thì cập nhật tiến độ
+            if (step_idx + 1) % self.args.print_every == 0 or (step_idx + 1) == num_batches:
+                curr_steps = step_idx + 1
+                elapsed = time.time() - start_time
+                step_elapsed = time.time() - step_start_time
+                
+                # Tốc độ và ETA
+                it_per_sec = (self.args.print_every if curr_steps < num_batches else (curr_steps % self.args.print_every or self.args.print_every)) / max(step_elapsed, 1e-5)
+
+                progress_pct = (curr_steps / num_batches) * 100
+                # Cập nhật real-time lên WandB theo từng step interval
+                self.accelerator.log({
+                    "train_step/progress_pct": progress_pct,
+                    "train_step/speed_it_s": it_per_sec,
+                })
+
+                step_start_time = time.time()
 
         if self.scheduler is not None:
             self.scheduler.step()
 
-        # Metrics aggregation
-        map_pred = np.concatenate(self.map_pred_actor_list, axis=0)
-        label_pred = np.concatenate(self.label_actor_list, axis=0)
-        map_pred = map_pred.reshape(-1, self.num_actor_class)
-        label_pred = label_pred.reshape(-1, self.num_actor_class)
+        map_pred_actor_list = np.concatenate(self.map_pred_actor_list, axis=0)
+        label_actor_list = np.concatenate(self.label_actor_list, axis=0)
 
-        mAP = average_precision_score(label_pred, map_pred.astype(np.float32))
+        train_mAP = average_precision_score(label_actor_list, map_pred_actor_list.astype(np.float32))
+
         loss_epoch = self.loss_epoch / num_batches
-        actor_loss = self.actor_loss_epoch / num_batches
-        ego_loss = self.ego_loss_epoch / num_batches
-        ego_acc = self.correct_ego / max(1, self.total_ego)
-        tracking_avg = {k: self.tracking_stats[k] / num_batches for k in self.tracking_stats}
+        actor_loss_epoch = self.actor_loss_epoch / num_batches
+        ego_loss_epoch = self.ego_loss_epoch / num_batches
+        ego_acc = self.correct_ego / max(self.total_ego, 1)
+
+        self.accelerator.print(f'acc of the ego: {ego_acc}')
+        logging.info(f'acc of the ego: {ego_acc}')
+        self.accelerator.print('total loss')
+        logging.info('total loss')
+        self.accelerator.print(loss_epoch)
+        logging.info(loss_epoch)
+
+        if self.args.action_attn_weight > 0 or self.args.bg_attn_weight > 0:
+            attn_loss_epoch = self.attn_loss_epoch / num_batches
+            self.accelerator.print('attn loss:')
+            logging.info('attn loss:')
+            self.accelerator.print(attn_loss_epoch)
+            logging.info(attn_loss_epoch)
+
+            if self.args.action_attn_weight > 0:
+                action_attn_loss_epoch = self.action_attn_loss_epoch / num_batches
+                self.accelerator.print('action_attn_loss')
+                logging.info('action_attn_loss')
+                self.accelerator.print(action_attn_loss_epoch)
+                logging.info(action_attn_loss_epoch)
+            if self.args.bg_attn_weight > 0:
+                bg_attn_loss_epoch = self.bg_attn_loss_epoch / num_batches
+                self.accelerator.print('bg_attn_loss_epoch')
+                logging.info('bg_attn_loss_epoch')
+                self.accelerator.print(bg_attn_loss_epoch)
+                logging.info(bg_attn_loss_epoch)
+
+        self.accelerator.print('-' * 20)
+        logging.info('-' * 20)
+        self.accelerator.print('actor loss:')
+        logging.info('actor loss:')
+        self.accelerator.print(actor_loss_epoch)
+        logging.info(actor_loss_epoch)
+        self.accelerator.print('ego loss:')
+        logging.info('ego loss:')
+        self.accelerator.print(ego_loss_epoch)
+        logging.info(ego_loss_epoch)
+        self.accelerator.print(f'(train) mAP of the actor: {train_mAP}')
+        logging.info(f'(train) mAP of the actor: {train_mAP}')
+
+        self.accelerator.log({
+            "train/total_loss": loss_epoch,
+            "train/actor_loss": actor_loss_epoch,
+            "train/ego_loss": ego_loss_epoch,
+            "train/ego_acc": ego_acc,
+            "train/mAP": train_mAP,
+            "train/lr": current_lr,
+            "epoch": self.cur_epoch
+        }, step=self.cur_epoch)
 
         self.train_loss.append(loss_epoch)
-
-        # Tính toán % tiến trình của Train Epoch
-        train_progress_pct = ((self.cur_epoch + 1) / float(self.args.epochs)) * 100.0
-
-        train_metrics = {
-            "train/loss": loss_epoch,
-            "train/actor_loss": actor_loss,
-            "train/ego_loss": ego_loss,
-            "train/ego_acc": ego_acc,
-            "train/mAP": float(mAP),
-            "train/lr": lr_current,
-            "progress/train_pct": train_progress_pct,  # Đồ thị % tiến độ train
-            **{f"tracking/{k}": v for k, v in tracking_avg.items()}
-        }
-
-        if self.accelerator.is_main_process:
-            display_metrics_table(self.cur_epoch, {
-                "Train Loss": loss_epoch,
-                "Actor Loss": actor_loss,
-                "Ego Loss": ego_loss,
-                "Ego Accuracy": f"{ego_acc * 100:.2f}%",
-                "Actor mAP": f"{mAP:.4f}",
-                "Learning Rate": f"{lr_current:.2e}",
-                "Train Progress": f"{train_progress_pct:.2f}%"
-            }, title="Training Summary")
-
-            display_metrics_table(self.cur_epoch, tracking_avg, title="Training Tracking")
-
-            # TensorBoard qua Accelerate
-            if not getattr(self.args, "wandb", False):
-                self.accelerator.log(train_metrics, step=self.cur_epoch)
-
-            # WandB độc lập
-            if getattr(self.args, "wandb", False) and wandb.run is not None:
-                wandb.log(train_metrics, step=self.cur_epoch)
-
-            # TensorBoard SummaryWriter (nếu có writer thủ công)
-            if self.writer:
-                self.writer.add_scalar('progress/train_pct', train_progress_pct, self.cur_epoch)
-
         self.cur_epoch += 1
 
-    def validate(self, dataloader_val, logdir):
+    def validate(self, dataloader_val, abs_logdir):
         self.model.eval()
+        save_cp = False
         self.reset_log()
-        num_batches = len(dataloader_val)
 
+        num_batches = len(dataloader_val)
         with torch.no_grad():
-            for data in dataloader_val:
+            for step_idx, data in enumerate(dataloader_val):
                 self.step(data, 'val')
 
-            map_pred = np.concatenate(self.map_pred_actor_list, axis=0).reshape(-1, self.num_actor_class)
-            label_pred = np.concatenate(self.label_actor_list, axis=0).reshape(-1, self.num_actor_class)
+            if self.args.action_attn_weight > 0. or self.args.bg_attn_weight > 0.:
+                attn_loss_epoch = self.attn_loss_epoch / num_batches
+                self.accelerator.print('attn loss:')
+                logging.info('attn loss:')
+                self.accelerator.print(attn_loss_epoch)
+                logging.info(attn_loss_epoch)
 
-            mAP = average_precision_score(label_pred, map_pred.astype(np.float32))
-            c_mAP = average_precision_score(label_pred[:, :12], map_pred[:, :12].astype(np.float32))
-            group_c_mAP = average_precision_score(label_pred[:, 12:24], map_pred[:, 12:24].astype(np.float32))
-            b_mAP = average_precision_score(label_pred[:, 24:36], map_pred[:, 24:36].astype(np.float32))
-            group_b_mAP = average_precision_score(label_pred[:, 36:48], map_pred[:, 36:48].astype(np.float32))
-            p_mAP = average_precision_score(label_pred[:, 48:56], map_pred[:, 48:56].astype(np.float32))
-            group_p_mAP = average_precision_score(label_pred[:, 56:64], map_pred[:, 56:64].astype(np.float32))
+                if self.args.action_attn_weight > 0.:
+                    action_attn_loss_epoch = self.action_attn_loss_epoch / num_batches
+                    self.accelerator.print('action_attn_loss')
+                    logging.info('action_attn_loss')
+                    self.accelerator.print(action_attn_loss_epoch)
+                    logging.info(action_attn_loss_epoch)
+                if self.args.bg_attn_weight > 0.:
+                    bg_attn_loss_epoch = self.bg_attn_loss_epoch / num_batches
+                    self.accelerator.print('bg_attn_loss_epoch')
+                    logging.info('bg_attn_loss_epoch')
+                    self.accelerator.print(bg_attn_loss_epoch)
+                    logging.info(bg_attn_loss_epoch)
 
-            total_loss = self.loss_epoch / float(max(1, num_batches))
-            ego_acc = self.correct_ego / max(1, self.total_ego)
-            self.val_loss.append(total_loss)
+            if self.args.action_attn_weight > 0 and self.args.bg_attn_weight > 0:
+                iou = self.action_inter.sum / (self.action_union.sum + 1e-10)
+                for i, val in enumerate(iou):
+                    self.accelerator.print('Action IoU {0}: {1:.2f}'.format(i, val * 100))
+                    logging.info('Action IoU {0}: {1:.2f}'.format(i, val * 100))
 
-            save_cp = False
+                iou = self.bg_inter.sum / (self.bg_union.sum + 1e-10)
+                for i, val in enumerate(iou):
+                    self.accelerator.print('BG IoU {0}: {1:.2f}'.format(i, val * 100))
+                    logging.info('BG IoU {0}: {1:.2f}'.format(i, val * 100))
+
+            map_pred_actor_list = np.concatenate(self.map_pred_actor_list, axis=0)
+            label_actor_list = np.concatenate(self.label_actor_list, axis=0)
+
+            mAP = average_precision_score(
+                label_actor_list,
+                map_pred_actor_list.astype(np.float32),
+            )
+            c_mAP = average_precision_score(
+                label_actor_list[:, :12],
+                map_pred_actor_list[:, :12].astype(np.float32)
+            )
+            b_mAP = average_precision_score(
+                label_actor_list[:, 24:36],
+                map_pred_actor_list[:, 24:36].astype(np.float32)
+            )
+            p_mAP = average_precision_score(
+                label_actor_list[:, 48:56],
+                map_pred_actor_list[:, 48:56].astype(np.float32),
+            )
+            group_c_mAP = average_precision_score(
+                label_actor_list[:, 12:24],
+                map_pred_actor_list[:, 12:24].astype(np.float32)
+            )
+            group_b_mAP = average_precision_score(
+                label_actor_list[:, 36:48],
+                map_pred_actor_list[:, 36:48].astype(np.float32)
+            )
+            group_p_mAP = average_precision_score(
+                label_actor_list[:, 56:64],
+                map_pred_actor_list[:, 56:64].astype(np.float32),
+            )
+            mAP_per_class = average_precision_score(
+                label_actor_list,
+                map_pred_actor_list.astype(np.float32), 
+                average=None
+            )
+
+            self.accelerator.print(f'(val) mAP: {mAP}')
+            self.accelerator.print(f'(val) mAP of the c: {c_mAP}')
+            self.accelerator.print(f'(val) mAP of the b: {b_mAP}')
+            self.accelerator.print(f'(val) mAP of the p: {p_mAP}')
+            self.accelerator.print(f'(val) mAP of the c+: {group_c_mAP}')
+            self.accelerator.print(f'(val) mAP of the b+: {group_b_mAP}')
+            self.accelerator.print(f'(val) mAP of the p+: {group_p_mAP}')
+
+            logging.info(f'(val) mAP: {mAP}')
+            logging.info(f'(val) mAP of the c: {c_mAP}')
+            logging.info(f'(val) mAP of the b: {b_mAP}')
+            logging.info(f'(val) mAP of the p: {p_mAP}')
+            logging.info(f'(val) mAP of the c+: {group_c_mAP}')
+            logging.info(f'(val) mAP of the b+: {group_b_mAP}')
+            logging.info(f'(val) mAP of the p+: {group_p_mAP}')
+
+            ego_acc = self.correct_ego / max(self.total_ego, 1)
+            self.accelerator.print(f'acc of the ego: {ego_acc}')
+            logging.info(f'acc of the ego: {ego_acc}')
+
             if mAP > self.best_mAP:
                 self.best_mAP = mAP
+                self.best_log = [
+                    f'(val) mAP: {mAP}',
+                    f'(val) mAP of the c: {c_mAP}',
+                    f'(val) mAP of the b: {b_mAP}',
+                    f'(val) mAP of the p: {p_mAP}',
+                    f'(val) mAP of the c+: {group_c_mAP}',
+                    f'(val) mAP of the b+: {group_b_mAP}',
+                    f'(val) mAP of the p+: {group_p_mAP}'
+                ]
                 save_cp = True
 
-            # Tính toán % tiến trình của Val Epoch (theo tổng số epochs)
-            val_progress_pct = (self.cur_epoch / float(self.args.epochs)) * 100.0
-
-            val_metrics = {
-                "val/loss": total_loss,
-                "val/mAP": float(mAP),
-                "val/c_mAP": float(c_mAP),
-                "val/group_c_mAP": float(group_c_mAP),
-                "val/b_mAP": float(b_mAP),
-                "val/group_b_mAP": float(group_b_mAP),
-                "val/p_mAP": float(p_mAP),
-                "val/group_p_mAP": float(group_p_mAP),
-                "val/ego_acc": float(ego_acc),
-                "val/best_mAP": float(self.best_mAP),
-                "progress/val_pct": val_progress_pct  # Đồ thị % tiến độ validation
-            }
+            self.accelerator.print(f'best mAP : {self.best_mAP}')
+            logging.info(f'best mAP : {self.best_mAP}')
 
             if self.accelerator.is_main_process:
-                display_metrics_table(self.cur_epoch - 1, {
-                    "Val Loss": total_loss,
-                    "Total mAP": float(mAP),
-                    "c_mAP (Cars)": float(c_mAP),
-                    "c+_mAP": float(group_c_mAP),
-                    "b_mAP (Bikes)": float(b_mAP),
-                    "b+_mAP": float(group_b_mAP),
-                    "p_mAP (Peds)": float(p_mAP),
-                    "p+_mAP": float(group_p_mAP),
-                    "Best mAP": float(self.best_mAP),
-                    "Val Progress": f"{val_progress_pct:.2f}%"
-                }, title="Validation Evaluation")
+                with open(os.path.join(abs_logdir, 'mAP.txt'), 'a') as f:
+                    f.write('epoch: ' + str(self.cur_epoch) + '\n')
+                    f.write('best mAP: %.4f\n' % self.best_mAP)
+                    f.write('mAP: %.4f\n' % mAP)
+                    f.write('mAP of c: %.4f\n' % c_mAP)
+                    f.write('mAP of b: %.4f\n' % b_mAP)
+                    f.write('mAP of p: %.4f\n' % p_mAP)
+                    f.write('mAP of c+: %.4f\n' % group_c_mAP)
+                    f.write('mAP of b+: %.4f\n' % group_b_mAP)
+                    f.write('mAP of p+: %.4f\n' % group_p_mAP)
 
-                # TensorBoard qua Accelerate
-                if not getattr(self.args, "wandb", False):
-                    self.accelerator.log(val_metrics, step=self.cur_epoch - 1)
+                    # 1. Nhóm c: 0 đến 12
+                    f.write("c per class: \n")
+                    for ap in mAP_per_class[:12].tolist():
+                        f.write("%.4f " % ap)
+                    f.write("\n")
 
-                # WandB độc lập
-                if getattr(self.args, "wandb", False) and wandb.run is not None:
-                    wandb.log(val_metrics, step=self.cur_epoch - 1)
+                    # 2. Nhóm c+: 12 đến 24
+                    f.write("c+ per class: \n")
+                    for ap in mAP_per_class[12:24].tolist():
+                        f.write("%.4f " % ap)
+                    f.write("\n")
 
-                if self.writer:
-                    self.writer.add_scalar('val/mAP', mAP, self.cur_epoch - 1)
-                    self.writer.add_scalar('val/loss', total_loss, self.cur_epoch - 1)
-                    self.writer.add_scalar('progress/val_pct', val_progress_pct, self.cur_epoch - 1)
+                    # 3. Nhóm b: 24 đến 36
+                    f.write("b per class: \n")
+                    for ap in mAP_per_class[24:36].tolist():
+                        f.write("%.4f " % ap)
+                    f.write("\n")
 
-                with open(os.path.join(logdir, 'mAP.txt'), 'a') as f:
-                    f.write(f"epoch: {self.cur_epoch - 1}\nbest mAP: {self.best_mAP:.4f}\nmAP: {mAP:.4f}\n")
-                    f.write(f"c_mAP: {c_mAP:.4f} | b_mAP: {b_mAP:.4f} | p_mAP: {p_mAP:.4f}\n{'*'*25}\n")
+                    # 4. Nhóm b+: 36 đến 48
+                    f.write("b+ per class: \n")
+                    for ap in mAP_per_class[36:48].tolist():
+                        f.write("%.4f " % ap)
+                    f.write("\n")
 
+                    # 5. Nhóm p: 48 đến 56
+                    f.write("p per class: \n")
+                    for ap in mAP_per_class[48:56].tolist():
+                        f.write("%.4f " % ap)
+                    f.write("\n")
+
+                    # 6. Nhóm p+: 56 đến 64
+                    f.write("p+ per class: \n")
+                    for ap in mAP_per_class[56:64].tolist():
+                        f.write("%.4f " % ap)
+                    f.write("\n")
+                    f.write('*' * 15 + '\n')
+
+            logging.info('epoch: ' + str(self.cur_epoch))
+            logging.info('best mAP: %.4f' % self.best_mAP)
+            logging.info('mAP: %.4f' % mAP)
+            logging.info('mAP of c: %.4f' % c_mAP)
+            logging.info('mAP of b: %.4f' % b_mAP)
+            logging.info('mAP of p: %.4f' % p_mAP)
+            logging.info('mAP of c+: %.4f' % group_c_mAP)
+            logging.info('mAP of b+: %.4f' % group_b_mAP)
+            logging.info('mAP of p+: %.4f' % group_p_mAP)
+
+            logging.info('c per class: ' + ' '.join(
+                "%.4f" % ap for ap in mAP_per_class[:12].tolist()
+            ))
+            logging.info('c+ per class: ' + ' '.join(
+                "%.4f" % ap for ap in mAP_per_class[12:24].tolist()
+            ))
+            logging.info('b per class: ' + ' '.join(
+                "%.4f" % ap for ap in mAP_per_class[24:36].tolist()
+            ))
+            logging.info('b+ per class: ' + ' '.join(
+                "%.4f" % ap for ap in mAP_per_class[36:48].tolist()
+            ))
+            logging.info('p per class: ' + ' '.join(
+                "%.4f" % ap for ap in mAP_per_class[48:56].tolist()
+            ))
+            logging.info('p+ per class: ' + ' '.join(
+                "%.4f" % ap for ap in mAP_per_class[56:64].tolist()
+            ))
+            logging.info('*' * 15)
+
+            total_loss = self.loss_epoch / float(num_batches)
+            self.accelerator.print(f'Epoch {self.cur_epoch:03d} Loss: {total_loss:3.3f}')
+
+            # WandB logging
+            self.accelerator.log({
+                "val/total_loss": total_loss,
+                "val/ego_acc": ego_acc,
+                "val/mAP": mAP,
+                "val/c_mAP": c_mAP,
+                "val/b_mAP": b_mAP,
+                "val/p_mAP": p_mAP,
+                "val/group_c_mAP": group_c_mAP,
+                "val/group_b_mAP": group_b_mAP,
+                "val/group_p_mAP": group_p_mAP,
+                "val/best_mAP": self.best_mAP,
+                "epoch": self.cur_epoch
+            }, step=self.cur_epoch)
+
+            self.val_loss.append(total_loss)
             return save_cp, [mAP, total_loss]
 
-    def save_checkpoint(self, logdir, is_best):
+    def save(self, is_best, abs_logdir):
         if is_best and self.accelerator.is_main_process:
+            self.bestval = self.val_loss[-1]
             unwrapped_model = self.accelerator.unwrap_model(self.model)
-            save_path = os.path.join(logdir, 'best_model.pth')
-            torch.save(unwrapped_model.state_dict(), save_path)
-            if console:
-                console.print(f"[bold green]✔ Saved Best Model to {save_path}[/bold green]")
-            else:
-                print(f"[BEST] Overwrote best model at {save_path}")
+            save_path = os.path.join(abs_logdir, 'best_model.pth')
+            self.accelerator.save(unwrapped_model.state_dict(), save_path)
+            self.accelerator.print(f"====== Overwrote best model at {save_path} ======>")
 
 
 if __name__ == '__main__':
@@ -407,106 +556,94 @@ if __name__ == '__main__':
         level=logging.INFO
     )
 
-    args, logdir = parser()
-    seq_len = args.seq_len
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    logging.info('\n' * 5)
 
-    use_wandb = getattr(args, "wandb", False)
-    log_with = None if use_wandb else "tensorboard"
-    accelerator = Accelerator(
-        kwargs_handlers=[ddp_kwargs],
-        log_with=log_with,
-        project_dir=logdir if not use_wandb else None
+    args, logdir = parser()
+    print(args)
+    logging.info(args)
+
+    # Initialize Accelerator with wandb logging backend
+    accelerator = Accelerator(log_with="wandb")
+    accelerator.init_trackers(
+        project_name=getattr(args, 'wandb_project', 'action-slot-taco'),
+        config=vars(args),
+        init_kwargs={"wandb": {"name": getattr(args, 'run_name', None), "dir": "./"}}
     )
 
     logdir = logdir.replace(':', '_').replace('\n', '_').replace(" ", "")
     abs_logdir = os.path.abspath(logdir)
     if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
         abs_logdir = f'\\\\?\\{abs_logdir}'
-    logdir = abs_logdir
-
-    lmdb_train_path = "/kaggle/working/taco_train.lmdb"
-    lmdb_val_path = "/kaggle/working/taco_val.lmdb"
 
     if accelerator.is_main_process:
-        os.makedirs(logdir, exist_ok=True)
-        writer = SummaryWriter(log_dir=logdir)
-        lmdb_train_path, lmdb_val_path = put_into_working()
-
-        if use_wandb:
-            wandb.init(
-                project=os.environ.get("WANDB_PROJECT", getattr(args, "wandb_project", "action_slot")),
-                name=os.path.basename(logdir),
-                config=vars(args),
-                mode="online"
-            )
-    else:
-        writer = None
-
-    accelerator.wait_for_everyone()
-
-    if not use_wandb and accelerator.is_main_process:
-        accelerator.init_trackers(
-            project_name="runs",
-            config=vars(args)
-        )
+        os.makedirs(abs_logdir, exist_ok=True)
 
     num_ego_class = 4
     num_actor_class = 64
 
-    # Dataloaders
-    train_set = TACO(args, lmdb_train_path, lmdb_val_path, split='train')
-    val_set = TACO(args, lmdb_train_path, lmdb_val_path, split='val')
+    accelerator.print('initialize train set')
+    logging.info('initialize train set')
+    train_set = TACO(args=args, split='train')
+
+    accelerator.print('initialize val set')
+    logging.info('initialize val set')
+    val_set = TACO(args=args, split='val')
 
     dataloader_train = DataLoader(
-        train_set, batch_size=args.batch_size, shuffle=True,
-        num_workers=args.num_workers, pin_memory=True, drop_last=True
+        train_set,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=True
     )
     dataloader_val = DataLoader(
-        val_set, batch_size=1, shuffle=False,
-        num_workers=args.num_workers, pin_memory=True, drop_last=False
+        val_set,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=True
     )
 
-    # Model
+    # Initialize model
     model = generate_model(args, num_ego_class, num_actor_class)
 
-    # Optimizer & Scheduler
-    params = set_lr(model) if 'mvit' == args.model_name else [{'params': model.parameters()}]
+    if args.model_name == 'mvit':
+        params = set_lr(model)
+    else:
+        params = [{'params': model.parameters()}]
     optimizer = optim.AdamW(params, lr=args.lr, weight_decay=args.wd)
+
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_lr) if args.scheduler else None
 
-    # Loss criterion
-    attention_res = (model.resolution[0] * args.bg_upsample, model.resolution[1] * args.bg_upsample) if hasattr(model, 'resolution') else None
-    criterion = ActionSlotLoss(args, num_actor_class, attention_res).to(accelerator.device)
+    # Prepare model, optimizer, dataloaders, and scheduler with Accelerate
+    if scheduler is not None:
+        model, optimizer, dataloader_train, dataloader_val, scheduler = accelerator.prepare(
+            model, optimizer, dataloader_train, dataloader_val, scheduler
+        )
+    else:
+        model, optimizer, dataloader_train, dataloader_val = accelerator.prepare(
+            model, optimizer, dataloader_train, dataloader_val
+        )
 
-    # Chuẩn bị model & components với Accelerate
-    model, optimizer, dataloader_train, dataloader_val, scheduler = accelerator.prepare(
-        model, optimizer, dataloader_train, dataloader_val, scheduler
-    )
+    trainer = Engine(args, model, optimizer, num_actor_class, accelerator, scheduler)
 
-    trainer = Engine(
-        args=args,
-        accelerator=accelerator,
-        model=model,
-        optimizer=optimizer,
-        num_actor_class=num_actor_class,
-        criterion=criterion,
-        scheduler=scheduler,
-        writer=writer
-    )
+    accelerator.print(f'Checkpoint path: {logdir}')
 
     result_list = []
     for epoch in range(trainer.cur_epoch, args.epochs):
-        trainer.train_epoch(dataloader_train)
-        if (epoch % args.val_every == 0 or epoch == args.epochs - 1):
-            is_best, res = trainer.validate(dataloader_val, logdir)
-            trainer.save_checkpoint(logdir, is_best)
+        trainer.train(dataloader_train)
+        if epoch % args.val_every == 0 or epoch == args.epochs - 1:
+            is_best, res = trainer.validate(dataloader_val, abs_logdir)
+            trainer.save(is_best, abs_logdir)
             result_list.append(res)
 
-    if accelerator.is_main_process:
-        if not use_wandb:
-            accelerator.end_training()
-        if use_wandb and wandb.run is not None:
-            wandb.finish()
-        if len(result_list) > 0:
-            plot_result(np.array(result_list), args)
+    accelerator.print('********** Best model **********')
+    for s in trainer.best_log:
+        accelerator.print(s)
+
+    accelerator.end_training()
+
+    if accelerator.is_main_process and len(result_list) > 0:
+        plot_result(np.array(result_list), args)
