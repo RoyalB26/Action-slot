@@ -30,6 +30,7 @@ from model import generate_model
 from loss import ActionSlotLoss
 from utils import AverageMeter
 import time
+from put_lmdb import put_into_working
 import warnings
 
 # Suppress Python standard warnings (sklearn, PyTorch user warnings, etc.)
@@ -564,11 +565,7 @@ if __name__ == '__main__':
 
     # Initialize Accelerator with wandb logging backend
     accelerator = Accelerator(log_with="wandb")
-    accelerator.init_trackers(
-        project_name=getattr(args, 'wandb_project', 'action-slot-taco'),
-        config=vars(args),
-        init_kwargs={"wandb": {"name": getattr(args, 'run_name', None), "dir": "./"}}
-    )
+
 
     logdir = logdir.replace(':', '_').replace('\n', '_').replace(" ", "")
     abs_logdir = os.path.abspath(logdir)
@@ -580,14 +577,26 @@ if __name__ == '__main__':
 
     num_ego_class = 4
     num_actor_class = 64
+    lmdb_train_path = "/kaggle/working/taco_train.lmdb"
+    lmdb_val_path = "/kaggle/working/taco_val.lmdb"
+
+    if accelerator.is_main_process:
+        os.makedirs(logdir, exist_ok=True)
+        lmdb_train_path, lmdb_val_path = put_into_working()
+
+        accelerator.init_trackers(
+            project_name=getattr(args, 'wandb_project', 'action-slot-taco'),
+            config=vars(args),
+            init_kwargs={"wandb": {"name": getattr(args, 'run_name', None), "dir": "./"}}
+        )
 
     accelerator.print('initialize train set')
     logging.info('initialize train set')
-    train_set = TACO(args=args, split='train')
+    train_set = TACO(args, lmdb_train_path, lmdb_val_path, split='train')
 
     accelerator.print('initialize val set')
     logging.info('initialize val set')
-    val_set = TACO(args=args, split='val')
+    val_set = TACO(args, lmdb_train_path, lmdb_val_path, split='val')
 
     dataloader_train = DataLoader(
         train_set,
