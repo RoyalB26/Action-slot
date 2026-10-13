@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import logging
 from sklearn.metrics import average_precision_score
 from scipy.optimize import linear_sum_assignment
-
+from accelerate.utils import DistributedDataParallelKwargs
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -564,8 +564,11 @@ if __name__ == '__main__':
     logging.info(args)
 
     # Initialize Accelerator with wandb logging backend
-    accelerator = Accelerator(log_with="wandb")
-
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(
+            kwargs_handlers=[ddp_kwargs],
+            log_with="wandb",
+    )
 
     logdir = logdir.replace(':', '_').replace('\n', '_').replace(" ", "")
     abs_logdir = os.path.abspath(logdir)
