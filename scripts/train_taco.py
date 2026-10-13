@@ -357,15 +357,11 @@ class Engine(object):
                     logging.info(bg_attn_loss_epoch)
 
             if self.args.action_attn_weight > 0 and self.args.bg_attn_weight > 0:
-                iou = self.action_inter.sum / (self.action_union.sum + 1e-10)
-                for i, val in enumerate(iou):
-                    self.accelerator.print('Action IoU {0}: {1:.2f}'.format(i, val * 100))
-                    logging.info('Action IoU {0}: {1:.2f}'.format(i, val * 100))
-
-                iou = self.bg_inter.sum / (self.bg_union.sum + 1e-10)
-                for i, val in enumerate(iou):
-                    self.accelerator.print('BG IoU {0}: {1:.2f}'.format(i, val * 100))
-                    logging.info('BG IoU {0}: {1:.2f}'.format(i, val * 100))
+                if self.bg_union != None:
+                    iou = self.bg_inter.sum / (self.bg_union.sum + 1e-10)
+                    for i, val in enumerate(iou):
+                        self.accelerator.print('BG IoU {0}: {1:.2f}'.format(i, val * 100))
+                        logging.info('BG IoU {0}: {1:.2f}'.format(i, val * 100))
 
             map_pred_actor_list = np.concatenate(self.map_pred_actor_list, axis=0)
             label_actor_list = np.concatenate(self.label_actor_list, axis=0)
