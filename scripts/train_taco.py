@@ -357,7 +357,7 @@ class Engine(object):
                     logging.info(bg_attn_loss_epoch)
 
             if self.args.action_attn_weight > 0 and self.args.bg_attn_weight > 0:
-                if self.bg_union != None:
+                if self.bg_inter.sum:
                     iou = self.bg_inter.sum / (self.bg_union.sum + 1e-10)
                     for i, val in enumerate(iou):
                         self.accelerator.print('BG IoU {0}: {1:.2f}'.format(i, val * 100))
