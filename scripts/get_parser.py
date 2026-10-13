@@ -88,10 +88,10 @@ def parser():
         else:
             based_log = args.dataset + '_pretrained_' + args.pretrain 
     if not os.path.isdir(based_log):
-        os.makedirs(based_log)
+        os.makedirs(based_log, exist_ok= True)
     based_log = os.path.join(based_log, args.model_name)
     if not os.path.isdir(based_log):
-        os.makedirs(based_log)
+        os.makedirs(based_log, exist_ok= True)
 
     if args.model_name in ['action_slot', 'slot_savi', 'slot_mo', 'slot_vps', 'action_slot_query']:
         logdir = os.path.join(

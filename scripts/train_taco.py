@@ -575,9 +575,6 @@ if __name__ == '__main__':
     if os.name == 'nt' and not abs_logdir.startswith('\\\\?\\'):
         abs_logdir = f'\\\\?\\{abs_logdir}'
 
-    if accelerator.is_main_process:
-        os.makedirs(abs_logdir, exist_ok=True)
-
     num_ego_class = 4
     num_actor_class = 64
     lmdb_train_path = "/kaggle/working/taco_train.lmdb"
