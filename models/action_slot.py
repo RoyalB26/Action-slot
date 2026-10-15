@@ -11,6 +11,50 @@ import numpy as np
 from math import ceil 
 from ptflops import get_model_complexity_info
 import json
+
+class DenoiseFeatureSequence(nn.Module):
+    """
+    Lọc nhiễu cho từng vector chiều D của tensor shape (B, N, D).
+    Giữ nguyên shape đầu ra là (B, N, D).
+    """
+    def __init__(self, hidden_dim: int = 32):
+        super().__init__()
+        
+        # Sequence các layer CNN 1D lọc nhiễu theo chiều D
+        # Sử dụng padding = 'same' để giữ nguyên chiều dài D qua các conv layer
+        self.filter_seq = nn.Sequential(
+            # Chiếu từ 1 channel lên hidden_dim channels
+            nn.Conv1d(in_channels=1, out_channels=hidden_dim, kernel_size=3, padding='same'),
+            nn.BatchNorm1d(hidden_dim),
+            nn.GELU(),
+            
+            # Conv lọc sâu hơn
+            nn.Conv1d(in_channels=hidden_dim, out_channels=hidden_dim, kernel_size=3, padding='same'),
+            nn.BatchNorm1d(hidden_dim),
+            nn.GELU(),
+            
+            # Chiếu ngược về 1 channel ban đầu
+            nn.Conv1d(in_channels=hidden_dim, out_channels=1, kernel_size=3, padding='same')
+        )
+
+        self.f = nn.Linear(hidden_dim, hidden_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x có shape: (B, N, D)
+        B, N, D = x.shape
+        
+        # 1. Gom (B, N) thành batch dimension để xử lý độc lập từng vector D
+        # Shape mới: (B * N, 1, D) - 1 channel, độ dài chuỗi D
+        flat_x = x.reshape(B * N, 1, D)
+        
+        # 2. Đi qua sequence conv layers + cộng Residual connection
+        # Residual connection giúp mô hình học cách trừ đi phần nhiễu thay vì tái tạo lại toàn bộ
+        noise_filtered = self.f(flat_x) + self.filter_seq(flat_x)
+        
+        # 3. Reshape ngược lại về (B, N, D)
+        out = noise_filtered.view(B, N, D)
+        return out
+
 class SlotAttention(nn.Module):
     def __init__(
         self,
@@ -46,9 +90,9 @@ class SlotAttention(nn.Module):
         self.FC2 = nn.Linear(dim, dim)
         self.LN = nn.LayerNorm(dim)
 
-        self.to_q = nn.Linear(dim, dim)
-        self.to_k = nn.Linear(dim, dim)
-        self.to_v = nn.Linear(dim, dim)
+        self.to_q = DenoiseFeatureSequence(dim)
+        self.to_k = DenoiseFeatureSequence(dim)
+        self.to_v = DenoiseFeatureSequence(dim)
 
         self.fc1 = nn.Linear(dim, dim)
         self.fc2 = nn.Linear(dim, dim)
@@ -334,20 +378,20 @@ class ACTION_SLOT(nn.Module):
         # Assume x has shape: (B, T, H, W, C)
         B, T, H, W, C = x.shape
 
-        # 1. Permute and flatten spatial-temporal dimensions (T, H, W) into one dimension:
-        # Shape becomes: (B, C, T * H * W)
-        x_channels = x.permute(0, 4, 1, 2, 3).reshape(B, C, -1)
+        # # 1. Permute and flatten spatial-temporal dimensions (T, H, W) into one dimension:
+        # # Shape becomes: (B, C, T * H * W)
+        # x_channels = x.permute(0, 4, 1, 2, 3).reshape(B, C, -1)
 
-        # 2. L2-normalize along the spatial-temporal dimension (dim=-1)
-        # Each channel vector of length (T*H*W) now has unit norm: ||v_c||_2 = 1
-        x_norm = F.normalize(x_channels, p=2, dim=-1, eps=1e-8)
+        # # 2. L2-normalize along the spatial-temporal dimension (dim=-1)
+        # # Each channel vector of length (T*H*W) now has unit norm: ||v_c||_2 = 1
+        # x_norm = F.normalize(x_channels, p=2, dim=-1, eps=1e-8)
 
-        # 3. Batch matrix multiplication to compute pairwise cosine similarity
-        # (B, C, N) @ (B, N, C) -> (B, C, C)
-        sim_matrix = torch.bmm(x_norm, x_norm.transpose(1, 2))
+        # # 3. Batch matrix multiplication to compute pairwise cosine similarity
+        # # (B, C, N) @ (B, N, C) -> (B, C, C)
+        # sim_matrix = torch.bmm(x_norm, x_norm.transpose(1, 2))
 
-        with open('consine_similarity.json', 'w', encoding= 'utf-8') as f:
-            json.dump(sim_matrix.cpu().tolist(), f)
+        # with open('consine_similarity.json', 'w', encoding= 'utf-8') as f:
+        #     json.dump(sim_matrix.cpu().tolist(), f)
         
         x, attn_masks = self.slot_attention(x)
 
