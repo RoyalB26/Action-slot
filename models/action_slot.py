@@ -12,48 +12,33 @@ from math import ceil
 from ptflops import get_model_complexity_info
 import json
 
-class DenoiseFeatureSequence(nn.Module):
-    """
-    Lọc nhiễu cho từng vector chiều D của tensor shape (B, N, D).
-    Giữ nguyên shape đầu ra là (B, N, D).
-    """
-    def __init__(self, hidden_dim: int = 32):
+class SwiGLUFFN(nn.Module):
+    def __init__(self, in_features: int, hidden_features: int | None = None, bias: bool = False):
         super().__init__()
-        
-        # Sequence các layer CNN 1D lọc nhiễu theo chiều D
-        # Sử dụng padding = 'same' để giữ nguyên chiều dài D qua các conv layer
-        self.filter_seq = nn.Sequential(
-            # Chiếu từ 1 channel lên hidden_dim channels
-            nn.Conv1d(in_channels=1, out_channels=hidden_dim, kernel_size=3, padding='same'),
-            nn.BatchNorm1d(hidden_dim),
-            nn.GELU(),
-            
-            # Conv lọc sâu hơn
-            nn.Conv1d(in_channels=hidden_dim, out_channels=hidden_dim, kernel_size=3, padding='same'),
-            nn.BatchNorm1d(hidden_dim),
-            nn.GELU(),
-            
-            # Chiếu ngược về 1 channel ban đầu
-            nn.Conv1d(in_channels=hidden_dim, out_channels=1, kernel_size=3, padding='same')
-        )
+        # Nếu không chỉ định hidden_features, chuẩn thực tế (LLaMA/Mistral) 
+        # thường mở rộng xấp xỉ 8/3 * in_features (giữ nguyên budget FLOPs của MLP 4x thông thường)
+        if hidden_features is None:
+            hidden_features = int(2 * (4 * in_features) / 3)
+            # Làm tròn lên bội số của 8 để tối ưu hoá bộ nhớ Tensor Core
+            hidden_features = ((hidden_features + 7) // 8) * 8
 
-        self.f = nn.Linear(hidden_dim, hidden_dim)
+        # Ghép Gate (W_gate) và Up (W_up) vào cùng một ma trận
+        self.gate_up_proj = nn.Linear(in_features, 2 * hidden_features, bias=bias)
+        # Tầng Down (W_down) chiếu ngược lại số chiều ban đầu
+        self.down_proj = nn.Linear(hidden_features, in_features, bias=bias)
+        self.norm = nn.LayerNorm(in_features)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x có shape: (B, N, D)
-        B, N, D = x.shape
+        # x: (..., in_features)
+        x = self.norm(x)
+        gate_up = self.gate_up_proj(x)
+        gate, up = gate_up.chunk(2, dim=-1)
         
-        # 1. Gom (B, N) thành batch dimension để xử lý độc lập từng vector D
-        # Shape mới: (B * N, 1, D) - 1 channel, độ dài chuỗi D
-        flat_x = x.reshape(B * N, 1, D)
+        # SwiGLU: SiLU(Gate) * Up
+        activated = F.silu(gate) * up
         
-        # 2. Đi qua sequence conv layers + cộng Residual connection
-        # Residual connection giúp mô hình học cách trừ đi phần nhiễu thay vì tái tạo lại toàn bộ
-        noise_filtered = self.f(flat_x) + self.filter_seq(flat_x)
-        
-        # 3. Reshape ngược lại về (B, N, D)
-        out = noise_filtered.view(B, N, D)
-        return out
+        # Chiếu về số chiều ban đầu
+        return self.down_proj(activated)
 
 class SlotAttention(nn.Module):
     def __init__(
@@ -90,9 +75,9 @@ class SlotAttention(nn.Module):
         self.FC2 = nn.Linear(dim, dim)
         self.LN = nn.LayerNorm(dim)
 
-        self.to_q = DenoiseFeatureSequence(dim)
-        self.to_k = DenoiseFeatureSequence(dim)
-        self.to_v = DenoiseFeatureSequence(dim)
+        self.to_q = SwiGLUFFN(dim, 2 * dim)
+        self.to_k = SwiGLUFFN(dim, 2 * dim)
+        self.to_v = SwiGLUFFN(dim, 4 * dim)
 
         self.fc1 = nn.Linear(dim, dim)
         self.fc2 = nn.Linear(dim, dim)
@@ -153,7 +138,7 @@ class SlotAttention(nn.Module):
 
         b, n, d = inputs.shape
         inputs = self.norm_input(inputs)
-        k, v = self.to_k(inputs), self.to_v(inputs)
+        k, v = inputs - self.to_k(inputs), inputs - self.to_v(inputs)
         slots = self.norm_slots(slots)
         q = self.to_q(slots)
         dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
