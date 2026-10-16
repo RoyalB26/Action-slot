@@ -1,3 +1,4 @@
+from __future__ import annotations
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -11,7 +12,7 @@ import numpy as np
 from math import ceil 
 from ptflops import get_model_complexity_info
 import json
-from __future__ import annotations
+
 
 class SwiGLUFFN(nn.Module):
     def __init__(self, in_features: int, hidden_features: int | None = None, bias: bool = False):
