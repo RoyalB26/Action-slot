@@ -131,30 +131,21 @@ class SlotAttention(nn.Module):
         inputs = self.pe(inputs)
         inputs = torch.reshape(inputs, (b, -1, d))
 
-        inputs = self.LN(inputs)
-        inputs = self.FC1(inputs)
-        inputs = F.relu(inputs)
-        inputs = self.FC2(inputs)
-
-        slots_prev = slots
-
         b, n, d = inputs.shape
-        inputs = self.norm_input(inputs)
         k, v = inputs - self.to_k(inputs), inputs - self.to_v(inputs)
-        slots = self.norm_slots(slots)
         q = self.to_q(slots)
-        dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
-        attn_ori = dots.softmax(dim=1) + self.eps
-        attn = attn_ori / attn_ori.sum(dim=-1, keepdim=True)
-        slots = torch.einsum('bjd,bij->bid', v, attn)
-
+        dots = torch.einsum('bid,bjd->bij', q, k)
+        dots = dots / (self.dim ** 0.5)
+        attn = torch.softmax(dots, dim= 1)
+        x = torch.einsum('bjd,bij->bid', v, attn)
+        x = self.fc2(F.relu(self.fc1(self.norm_out(x))))
+        slots = slots + x
         slots = slots.reshape(b, -1, d)
         if self.allocated_slot:
             slots = slots[:, :self.num_actor_class, :]
         else:
             slots = slots[:, :self.num_slots, :]
-        slots = slots + self.fc2(F.relu(self.fc1(self.norm_pre_ff(slots))))
-        return slots, attn_ori
+        return slots, attn
 
     def forward(self, inputs, num_slots = None):
         b, nf, h, w, d = inputs.shape
