@@ -138,7 +138,7 @@ class SlotAttention(nn.Module):
         dots = dots / (self.dim ** 0.5)
         attn = torch.softmax(dots, dim= 1)
         x = torch.einsum('bjd,bij->bid', v, attn)
-        x = self.fc2(F.relu(self.fc1(self.norm_out(x))))
+        x = self.fc2(F.relu(self.fc1(self.norm_pre_ff(x))))
         slots = slots + x
         slots = slots.reshape(b, -1, d)
         if self.allocated_slot:
