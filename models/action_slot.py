@@ -1,4 +1,3 @@
-from __future__ import annotations
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -12,36 +11,6 @@ import numpy as np
 from math import ceil 
 from ptflops import get_model_complexity_info
 import json
-
-
-class SwiGLUFFN(nn.Module):
-    def __init__(self, in_features: int, hidden_features: int | None = None, bias: bool = False):
-        super().__init__()
-        # Nếu không chỉ định hidden_features, chuẩn thực tế (LLaMA/Mistral) 
-        # thường mở rộng xấp xỉ 8/3 * in_features (giữ nguyên budget FLOPs của MLP 4x thông thường)
-        if hidden_features is None:
-            hidden_features = int(2 * (4 * in_features) / 3)
-            # Làm tròn lên bội số của 8 để tối ưu hoá bộ nhớ Tensor Core
-            hidden_features = ((hidden_features + 7) // 8) * 8
-
-        # Ghép Gate (W_gate) và Up (W_up) vào cùng một ma trận
-        self.gate_up_proj = nn.Linear(in_features, 2 * hidden_features, bias=bias)
-        # Tầng Down (W_down) chiếu ngược lại số chiều ban đầu
-        self.down_proj = nn.Linear(hidden_features, in_features, bias=bias)
-        self.norm = nn.LayerNorm(in_features)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (..., in_features)
-        x = self.norm(x)
-        gate_up = self.gate_up_proj(x)
-        gate, up = gate_up.chunk(2, dim=-1)
-        
-        # SwiGLU: SiLU(Gate) * Up
-        activated = F.silu(gate) * up
-        
-        # Chiếu về số chiều ban đầu
-        return self.down_proj(activated)
-
 class SlotAttention(nn.Module):
     def __init__(
         self,
@@ -77,9 +46,9 @@ class SlotAttention(nn.Module):
         self.FC2 = nn.Linear(dim, dim)
         self.LN = nn.LayerNorm(dim)
 
-        self.to_q = SwiGLUFFN(dim, 2 * dim)
-        self.to_k = SwiGLUFFN(dim, 2 * dim)
-        self.to_v = SwiGLUFFN(dim, 4 * dim)
+        self.to_q = nn.Linear(dim, dim)
+        self.to_k = nn.Linear(dim, dim)
+        self.to_v = nn.Linear(dim, dim)
 
         self.fc1 = nn.Linear(dim, dim)
         self.fc2 = nn.Linear(dim, dim)
@@ -131,21 +100,30 @@ class SlotAttention(nn.Module):
         inputs = self.pe(inputs)
         inputs = torch.reshape(inputs, (b, -1, d))
 
+        inputs = self.LN(inputs)
+        inputs = self.FC1(inputs)
+        inputs = F.relu(inputs)
+        inputs = self.FC2(inputs)
+
+        slots_prev = slots
+
         b, n, d = inputs.shape
-        k, v = inputs - self.to_k(inputs), inputs - self.to_v(inputs)
+        inputs = self.norm_input(inputs)
+        k, v = self.to_k(inputs), self.to_v(inputs)
+        slots = self.norm_slots(slots)
         q = self.to_q(slots)
-        dots = torch.einsum('bid,bjd->bij', q, k)
-        dots = dots / (self.dim ** 0.5)
-        attn = torch.softmax(dots, dim= 1)
-        x = torch.einsum('bjd,bij->bid', v, attn)
-        x = self.fc2(F.relu(self.fc1(self.norm_pre_ff(x))))
-        slots = slots + x
+        dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
+        attn_ori = dots.softmax(dim=1) + self.eps
+        attn = attn_ori / attn_ori.sum(dim=-1, keepdim=True)
+        slots = torch.einsum('bjd,bij->bid', v, attn)
+
         slots = slots.reshape(b, -1, d)
         if self.allocated_slot:
             slots = slots[:, :self.num_actor_class, :]
         else:
             slots = slots[:, :self.num_slots, :]
-        return slots, attn
+        slots = slots + self.fc2(F.relu(self.fc1(self.norm_pre_ff(slots))))
+        return slots, attn_ori
 
     def forward(self, inputs, num_slots = None):
         b, nf, h, w, d = inputs.shape
@@ -352,7 +330,7 @@ class ACTION_SLOT(nn.Module):
         x = x.permute((0, 2, 3, 4, 1))
         # [bs, n, w, h, c]
         x = torch.reshape(x, (batch_size, new_seq_len, new_h, new_w, -1))
-
+        feat_map = x
         # Assume x has shape: (B, T, H, W, C)
         B, T, H, W, C = x.shape
 
@@ -398,8 +376,8 @@ class ACTION_SLOT(nn.Module):
         x = self.drop(x)
         if self.num_ego_class != 0:
             ego_x = self.drop(ego_x)
-            ego_x, x = self.head(x, ego_x)
+            ego_x, x = self.head(x, feat_map, ego_x)
             return ego_x, x, attn_masks
         else:
-            x = self.head(x)
+            x = self.head(x, feat_map)
             return x, attn_masks
