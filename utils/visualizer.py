@@ -7,10 +7,13 @@ Color Palette Specification:
 """
 
 import os
+os.environ['MPLBACKEND'] = 'Agg'
 import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+import matplotlib
+matplotlib.use('Agg', force=True)
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from utils.normalization import get_mean, get_std

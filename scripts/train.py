@@ -1,6 +1,7 @@
 """Training script for Action-Slot with X3D backbone on the TACO benchmark."""
 
 import os
+os.environ['MPLBACKEND'] = 'Agg'
 import sys
 import time
 import math
@@ -93,9 +94,12 @@ def train_one_epoch(
 
     device_type = 'cuda' if device.type == 'cuda' else 'cpu'
 
-    # When wandb is enabled, disable tqdm progress bar to keep clean remote logs
-    pbar = tqdm(dataloader, desc=f"Epoch {epoch} [Train]", disable=use_wandb)
-    iterator = pbar if not use_wandb else dataloader
+    is_main = accelerator is None or accelerator.is_main_process
+
+    # When wandb or multi-process is active, disable tqdm on non-main processes or when wandb clean mode is on
+    show_tqdm = (not use_wandb) and is_main
+    pbar = tqdm(dataloader, desc=f"Epoch {epoch} [Train]", disable=not show_tqdm)
+    iterator = pbar if show_tqdm else dataloader
 
     total_steps = len(dataloader)
     for step, batch in enumerate(iterator):
@@ -173,46 +177,46 @@ def train_one_epoch(
 
         loss_meter.update(total_loss.item(), n=label_actor.size(0))
 
-        # Real-time progress updates
-        quick = train_tracker.get_quick_status() if (train_tracker is not None and len(train_tracker.actor_preds) >= 10) else {}
-        if not use_wandb:
-            postfix = {
-                'loss': f"{loss_meter.avg:.4f}",
-                'accum': f"{(step % grad_accum_steps) + 1}/{grad_accum_steps}",
-            }
-            if quick:
-                postfix['mAP'] = f"{quick.get('mAP', 0.0):.3f}"
-                postfix['ego'] = f"{quick.get('ego_acc', 0.0):.2f}"
-            pbar.set_postfix(postfix)
-        else:
-            # When wandb is enabled, log metrics and periodically output clean status line
-            if use_wandb:
-                import wandb
-                if wandb.run is not None:
-                    log_data = {
-                        "train/loss_step": total_loss.item(),
-                        "train/loss_avg": loss_meter.avg,
-                        "train/step": (epoch - 1) * total_steps + step,
-                    }
-                    if quick:
-                        log_data["train/mAP_live"] = quick.get("mAP", 0.0)
-                        log_data["train/ego_acc_live"] = quick.get("ego_acc", 0.0)
-                    wandb.log(log_data)
+        # Real-time progress updates (rank 0 only)
+        if is_main:
+            quick = train_tracker.get_quick_status() if (train_tracker is not None and len(train_tracker.actor_preds) >= 10) else {}
+            if show_tqdm:
+                postfix = {
+                    'loss': f"{loss_meter.avg:.4f}",
+                    'accum': f"{(step % grad_accum_steps) + 1}/{grad_accum_steps}",
+                }
+                if quick:
+                    postfix['mAP'] = f"{quick.get('mAP', 0.0):.3f}"
+                    postfix['ego'] = f"{quick.get('ego_acc', 0.0):.2f}"
+                pbar.set_postfix(postfix)
+            else:
+                if use_wandb:
+                    import wandb
+                    if wandb.run is not None:
+                        log_data = {
+                            "train/loss_step": total_loss.item(),
+                            "train/loss_avg": loss_meter.avg,
+                            "train/step": (epoch - 1) * total_steps + step,
+                        }
+                        if quick:
+                            log_data["train/mAP_live"] = quick.get("mAP", 0.0)
+                            log_data["train/ego_acc_live"] = quick.get("ego_acc", 0.0)
+                        wandb.log(log_data)
 
-            if (step + 1) % 50 == 0 or (step + 1) == total_steps:
-                mAP_str = f" | mAP: {quick.get('mAP', 0.0):.4f}" if quick else ""
-                ego_str = f" | EgoAcc: {quick.get('ego_acc', 0.0):.4f}" if quick else ""
-                print(f"Epoch [{epoch}] Step [{step+1}/{total_steps}] Loss: {loss_meter.avg:.4f}{mAP_str}{ego_str}")
+                if (step + 1) % 50 == 0 or (step + 1) == total_steps:
+                    mAP_str = f" | mAP: {quick.get('mAP', 0.0):.4f}" if quick else ""
+                    ego_str = f" | EgoAcc: {quick.get('ego_acc', 0.0):.4f}" if quick else ""
+                    print(f"Epoch [{epoch}] Step [{step+1}/{total_steps}] Loss: {loss_meter.avg:.4f}{mAP_str}{ego_str}")
 
-        # Periodic in-training detailed error breakdown saved to file (silent on terminal)
-        if (
-            train_tracker is not None
-            and diagnose_every_steps > 0
-            and save_dir is not None
-            and (step + 1) % diagnose_every_steps == 0
-        ):
-            diag_file = os.path.join(save_dir, "train_diagnostics_live.json")
-            train_tracker.save_json(diag_file)
+            # Periodic in-training detailed error breakdown saved to file (silent on terminal)
+            if (
+                train_tracker is not None
+                and diagnose_every_steps > 0
+                and save_dir is not None
+                and (step + 1) % diagnose_every_steps == 0
+            ):
+                diag_file = os.path.join(save_dir, "train_diagnostics_live.json")
+                train_tracker.save_json(diag_file)
 
     return loss_meter.avg
 
@@ -262,7 +266,9 @@ def evaluate(
     device_type = 'cuda' if device.type == 'cuda' else 'cpu'
     attn_saved = False
 
-    iterator = dataloader if use_wandb else tqdm(dataloader, desc="[Validation]")
+    is_main = accelerator is None or accelerator.is_main_process
+    show_tqdm = (not use_wandb) and is_main
+    iterator = tqdm(dataloader, desc="[Validation]") if show_tqdm else dataloader
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(iterator):
@@ -301,15 +307,20 @@ def evaluate(
             if actor_logits.shape[-1] > num_actor_class:
                 actor_logits = actor_logits[:, :num_actor_class]
 
-            pred_probs = torch.sigmoid(actor_logits.float()).cpu().numpy()
-            all_preds.append(pred_probs)
-            all_gts.append(label_actor.cpu().numpy())
+            pred_probs = torch.sigmoid(actor_logits.float())
+            if accelerator is not None:
+                gathered_preds, gathered_gts = accelerator.gather_for_metrics((pred_probs, label_actor))
+                all_preds.append(gathered_preds.cpu().numpy())
+                all_gts.append(gathered_gts.cpu().numpy())
+            else:
+                all_preds.append(pred_probs.cpu().numpy())
+                all_gts.append(label_actor.cpu().numpy())
 
             if tracker is not None:
                 tracker.update(pred_actor=pred_actor, target_actor=label_actor, pred_ego=pred_ego, target_ego=label_ego)
 
-            # Save sample attention heatmap for the first validation batch
-            if save_attn_dir and attn is not None and not attn_saved:
+            # Save sample attention heatmap for the first validation batch (main process only)
+            if is_main and save_attn_dir and attn is not None and not attn_saved:
                 ep_tag = f"epoch_{epoch}_" if epoch is not None else ""
                 plot_file = os.path.join(save_attn_dir, f"{ep_tag}val_batch_{batch_idx}_attention.png")
                 try:
@@ -339,7 +350,6 @@ def main():
     """Main training workflow."""
     args = get_train_parser()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    os.makedirs(args.save_dir, exist_ok=True)
 
     # Setup Accelerate if requested
     accelerator = None
@@ -350,11 +360,17 @@ def main():
             gradient_accumulation_steps=args.grad_accum_steps,
         )
         device = accelerator.device
-        print(f"Accelerate initialized on device: {device}")
 
-    # Setup WandB if requested
+    is_main = accelerator is None or accelerator.is_main_process
+
+    if is_main:
+        os.makedirs(args.save_dir, exist_ok=True)
+        if accelerator is not None:
+            print(f"Accelerate initialized on device: {device} (Total processes: {accelerator.num_processes})")
+
+    # Setup WandB if requested (rank 0 only)
     use_wandb = getattr(args, 'wandb', False)
-    if use_wandb:
+    if use_wandb and is_main:
         import wandb
         wandb.init(
             project=getattr(args, 'wandb_project', 'Action-Slot-TACO'),
@@ -363,7 +379,8 @@ def main():
         )
         print(f"Weights & Biases initialized: Project '{args.wandb_project}' (tqdm progress bar disabled for clean logging)")
 
-    print(f"Loading TACO datasets...")
+    if is_main:
+        print(f"Loading TACO datasets...")
     train_dataset = TACO(
         args,
         lmdb_train_path=args.lmdb_train_path,
@@ -420,34 +437,41 @@ def main():
         use_cuda = device.type == 'cuda'
         scaler = torch.amp.GradScaler('cuda', enabled=(args.amp and use_cuda))
 
-    effective_batch_size = args.batch_size * args.grad_accum_steps
-    print(f"Training configuration:")
-    print(f"  - Micro batch size : {args.batch_size}")
-    print(f"  - Accumulation steps: {args.grad_accum_steps}")
-    print(f"  - Effective batch size: {effective_batch_size}")
-    print(f"  - AMP Mixed Precision: {'Enabled' if (args.amp and (use_cuda if accelerator is None else True)) else 'Disabled'}")
-    print(f"  - Accelerate Distributed: {'Enabled' if accelerator is not None else 'Disabled'}")
-    print(f"  - WandB Logging: {'Enabled (Clean mode without tqdm)' if use_wandb else 'Disabled'}")
-    if args.clip_grad_norm > 0:
-        print(f"  - Gradient Clipping: max_norm={args.clip_grad_norm}")
+    num_procs = accelerator.num_processes if accelerator is not None else 1
+    effective_batch_size = args.batch_size * args.grad_accum_steps * num_procs
+    if is_main:
+        print(f"Training configuration:")
+        print(f"  - Micro batch size (per GPU): {args.batch_size}")
+        print(f"  - Accumulation steps: {args.grad_accum_steps}")
+        print(f"  - Total GPUs / processes: {num_procs}")
+        print(f"  - Effective batch size: {effective_batch_size}")
+        print(f"  - AMP Mixed Precision: {'Enabled' if (args.amp and (use_cuda if accelerator is None else True)) else 'Disabled'}")
+        print(f"  - Accelerate Distributed: {'Enabled' if accelerator is not None else 'Disabled'}")
+        print(f"  - WandB Logging: {'Enabled (Clean mode without tqdm)' if use_wandb else 'Disabled'}")
+        if args.clip_grad_norm > 0:
+            print(f"  - Gradient Clipping: max_norm={args.clip_grad_norm}")
 
     # Optional diagnostic tracker and attention visualizer output dirs
     val_tracker = PerformanceTracker(num_actor_class, num_ego_class) if getattr(args, 'diagnose', False) else None
     train_tracker = PerformanceTracker(num_actor_class, num_ego_class) if getattr(args, 'diagnose', False) else None
     diagnose_every_steps = getattr(args, 'diagnose_every_steps', 100) if getattr(args, 'diagnose', False) else 0
 
-    # Initialize Excel full-metrics logger
-    excel_path = os.path.join(args.save_dir, "training_full_metrics.xlsx")
-    excel_logger = ExcelTrainingLogger(excel_path)
-    print(f"Excel full metrics tracking enabled: '{excel_path}'")
+    # Initialize Excel full-metrics logger (rank 0 only)
+    excel_logger = None
+    if is_main:
+        excel_path = os.path.join(args.save_dir, "training_full_metrics.xlsx")
+        excel_logger = ExcelTrainingLogger(excel_path)
+        print(f"Excel full metrics tracking enabled: '{excel_path}'")
 
-    attn_vis_dir = os.path.join(args.save_dir, "attention_vis") if getattr(args, 'plot_attn', False) else None
-    if attn_vis_dir:
+    attn_vis_dir = os.path.join(args.save_dir, "attention_vis") if (getattr(args, 'plot_attn', False) and is_main) else None
+    if attn_vis_dir and is_main:
         os.makedirs(attn_vis_dir, exist_ok=True)
 
     best_map = 0.0
 
-    print("Starting training...")
+    if is_main:
+        print("Starting training...")
+
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(
             model=model,
@@ -466,18 +490,20 @@ def main():
             use_wandb=use_wandb,
             accelerator=accelerator,
         )
-        print(f"Epoch [{epoch}/{args.epochs}] Train Loss: {train_loss:.4f}")
 
-        # Save training diagnostics to JSON file for this epoch (silent on terminal)
         train_diag = None
-        if train_tracker is not None:
-            train_diag = train_tracker.compute_summary()
-            train_diag_path = os.path.join(args.save_dir, f"train_diagnostics_epoch_{epoch}.json")
-            train_tracker.save_json(train_diag_path, train_diag)
+        if is_main:
+            print(f"Epoch [{epoch}/{args.epochs}] Train Loss: {train_loss:.4f}")
 
-        if use_wandb:
-            import wandb
-            wandb.log({"epoch": epoch, "train/epoch_loss": train_loss})
+            # Save training diagnostics to JSON file for this epoch (silent on terminal)
+            if train_tracker is not None:
+                train_diag = train_tracker.compute_summary()
+                train_diag_path = os.path.join(args.save_dir, f"train_diagnostics_epoch_{epoch}.json")
+                train_tracker.save_json(train_diag_path, train_diag)
+
+            if use_wandb:
+                import wandb
+                wandb.log({"epoch": epoch, "train/epoch_loss": train_loss})
 
         val_loss, val_map, val_diag = None, None, None
         if epoch % args.val_every == 0 or epoch == args.epochs:
@@ -494,84 +520,92 @@ def main():
                 use_wandb=use_wandb,
                 accelerator=accelerator,
             )
-            print(f"Epoch [{epoch}/{args.epochs}] Val Loss: {val_loss:.4f} | Val mAP: {val_map:.4f}")
+            if is_main:
+                print(f"Epoch [{epoch}/{args.epochs}] Val Loss: {val_loss:.4f} | Val mAP: {val_map:.4f}")
 
+                if use_wandb:
+                    import wandb
+                    wandb.log({"val/loss": val_loss, "val/mAP": val_map, "epoch": epoch})
+
+                # Save diagnostics JSON report
+                if val_diag and val_tracker is not None:
+                    diag_path = os.path.join(args.save_dir, f"diagnostics_epoch_{epoch}.json")
+                    val_tracker.save_json(diag_path, val_diag)
+                    print(f">> Saved detailed validation diagnostics report to {diag_path}")
+
+                # Save latest checkpoint
+                latest_path = os.path.join(args.save_dir, "latest_model.pth")
+                unwrapped = accelerator.unwrap_model(model) if accelerator is not None else model
+                torch.save(unwrapped.state_dict(), latest_path)
+
+                # Save best checkpoint
+                if val_map > best_map:
+                    best_map = val_map
+                    best_path = os.path.join(args.save_dir, "best_model.pth")
+                    torch.save(unwrapped.state_dict(), best_path)
+                    print(f">> Saved new best model (mAP: {best_map:.4f}) to {best_path}")
+
+        # Update and save Excel workbook with all training, gradient, and Q/K/V parameters (rank 0 only)
+        if is_main and excel_logger is not None:
+            unwrapped_model = accelerator.unwrap_model(model) if accelerator is not None else model
+            train_map_quick = train_diag.get('mAP', None) if train_diag else None
+            excel_logger.log_epoch(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                val_mAP=val_map,
+                train_mAP=train_map_quick,
+                model=unwrapped_model,
+                optimizer=optimizer,
+                diag_summary=val_diag or train_diag,
+            )
+
+            # Log all detailed tracker, gradient, and Q/K/V metrics to WandB
             if use_wandb:
                 import wandb
-                wandb.log({"val/loss": val_loss, "val/mAP": val_map, "epoch": epoch})
+                # Get latest overview, gradients, and QKV from excel logger records
+                wandb_metrics = {"epoch": epoch}
+                if excel_logger.epoch_records:
+                    latest_overview = excel_logger.epoch_records[-1]
+                    for k, v in latest_overview.items():
+                        if v is not None and not (isinstance(v, float) and np.isnan(v)):
+                            wandb_metrics[f"overview/{k.lower()}"] = v
 
-            # Save diagnostics JSON report
-            if val_diag and val_tracker is not None:
-                diag_path = os.path.join(args.save_dir, f"diagnostics_epoch_{epoch}.json")
-                val_tracker.save_json(diag_path, val_diag)
-                print(f">> Saved detailed validation diagnostics report to {diag_path}")
+                if excel_logger.grad_records:
+                    latest_grad = excel_logger.grad_records[-1]
+                    for k, v in latest_grad.items():
+                        if k != "Epoch":
+                            wandb_metrics[f"gradients/{k}"] = v
 
-            # Save latest checkpoint
-            latest_path = os.path.join(args.save_dir, "latest_model.pth")
-            unwrapped = accelerator.unwrap_model(model) if accelerator is not None else model
-            torch.save(unwrapped.state_dict(), latest_path)
+                if excel_logger.qkv_records:
+                    latest_qkv = excel_logger.qkv_records[-1]
+                    for k, v in latest_qkv.items():
+                        if k != "Epoch":
+                            wandb_metrics[f"qkv_attention/{k}"] = v
 
-            # Save best checkpoint
-            if val_map > best_map:
-                best_map = val_map
-                best_path = os.path.join(args.save_dir, "best_model.pth")
-                torch.save(unwrapped.state_dict(), best_path)
-                print(f">> Saved new best model (mAP: {best_map:.4f}) to {best_path}")
+                # Log Ego vehicle per-class accuracy if available
+                diag_for_wandb = val_diag or train_diag
+                if diag_for_wandb and "ego_metrics" in diag_for_wandb:
+                    ego_metrics = diag_for_wandb["ego_metrics"]
+                    wandb_metrics["ego/overall_accuracy"] = ego_metrics.get("overall_accuracy", 0.0)
+                    for ego_cls, stats in ego_metrics.get("per_class", {}).items():
+                        wandb_metrics[f"ego_classes/{ego_cls}"] = stats["accuracy"]
 
-        # Update and save Excel workbook with all training, gradient, and Q/K/V parameters
-        unwrapped_model = accelerator.unwrap_model(model) if accelerator is not None else model
-        train_map_quick = train_diag.get('mAP', None) if train_diag else None
-        excel_logger.log_epoch(
-            epoch=epoch,
-            train_loss=train_loss,
-            val_loss=val_loss,
-            val_mAP=val_map,
-            train_mAP=train_map_quick,
-            model=unwrapped_model,
-            optimizer=optimizer,
-            diag_summary=val_diag or train_diag,
-        )
+                # Log latest attention visualization artifact to WandB
+                if attn_vis_dir and os.path.exists(attn_vis_dir):
+                    plot_files = sorted([os.path.join(attn_vis_dir, f) for f in os.listdir(attn_vis_dir) if f.endswith(".png")])
+                    if plot_files:
+                        wandb_metrics["attention/sample_heatmap"] = wandb.Image(plot_files[-1], caption=f"Epoch {epoch} Attention Heatmap")
 
-        # Log all detailed tracker, gradient, and Q/K/V metrics to WandB
-        if use_wandb:
-            import wandb
-            # Get latest overview, gradients, and QKV from excel logger records
-            wandb_metrics = {"epoch": epoch}
-            if excel_logger.epoch_records:
-                latest_overview = excel_logger.epoch_records[-1]
-                for k, v in latest_overview.items():
-                    if v is not None and not (isinstance(v, float) and np.isnan(v)):
-                        wandb_metrics[f"overview/{k.lower()}"] = v
+                wandb.log(wandb_metrics)
 
-            if excel_logger.grad_records:
-                latest_grad = excel_logger.grad_records[-1]
-                for k, v in latest_grad.items():
-                    if k != "Epoch":
-                        wandb_metrics[f"gradients/{k}"] = v
+        if accelerator is not None:
+            accelerator.wait_for_everyone()
 
-            if excel_logger.qkv_records:
-                latest_qkv = excel_logger.qkv_records[-1]
-                for k, v in latest_qkv.items():
-                    if k != "Epoch":
-                        wandb_metrics[f"qkv_attention/{k}"] = v
+    if accelerator is not None:
+        accelerator.wait_for_everyone()
 
-            # Log Ego vehicle per-class accuracy if available
-            diag_for_wandb = val_diag or train_diag
-            if diag_for_wandb and "ego_metrics" in diag_for_wandb:
-                ego_metrics = diag_for_wandb["ego_metrics"]
-                wandb_metrics["ego/overall_accuracy"] = ego_metrics.get("overall_accuracy", 0.0)
-                for ego_cls, stats in ego_metrics.get("per_class", {}).items():
-                    wandb_metrics[f"ego_classes/{ego_cls}"] = stats["accuracy"]
-
-            # Log latest attention visualization artifact to WandB
-            if attn_vis_dir and os.path.exists(attn_vis_dir):
-                plot_files = sorted([os.path.join(attn_vis_dir, f) for f in os.listdir(attn_vis_dir) if f.endswith(".png")])
-                if plot_files:
-                    wandb_metrics["attention/sample_heatmap"] = wandb.Image(plot_files[-1], caption=f"Epoch {epoch} Attention Heatmap")
-
-            wandb.log(wandb_metrics)
-
-    if use_wandb:
+    if use_wandb and is_main:
         import wandb
         wandb.finish()
 

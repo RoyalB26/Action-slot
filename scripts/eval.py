@@ -1,6 +1,7 @@
 """Evaluation script computing mAP, Precision, and Recall on the TACO dataset."""
 
 import os
+os.environ['MPLBACKEND'] = 'Agg'
 import sys
 import numpy as np
 import torch
