@@ -75,8 +75,12 @@ class PerformanceTracker:
             self.ego_preds.append(np.asarray(pred_ego))
             self.ego_targets.append(np.asarray(target_ego))
 
-    def compute_summary(self, threshold=0.5):
+    def compute_summary(self, threshold=0.5, clear_buffers=True):
         """Compute comprehensive performance breakdown and diagnose poor performers.
+
+        Args:
+            threshold (float): Decision boundary threshold for binary classification.
+            clear_buffers (bool): If True, immediately clear internal arrays to free RAM.
 
         Returns:
             dict: Detailed diagnostic report.
@@ -178,7 +182,7 @@ class PerformanceTracker:
                 "per_class": per_ego_acc,
             }
 
-        return {
+        report = {
             "mAP": round(mean_ap, 4),
             "num_evaluated_samples": len(all_actor_gts),
             "best_performing_actor_classes": best_classes,
@@ -186,6 +190,11 @@ class PerformanceTracker:
             "all_actor_classes": actor_class_reports,
             "ego_metrics": ego_summary,
         }
+
+        if clear_buffers:
+            self.reset()
+
+        return report
 
     def print_diagnostic_table(self, summary=None, title="MODEL DIAGNOSTIC REPORT"):
         """Format and print an informative diagnostic console report."""

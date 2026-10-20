@@ -52,7 +52,7 @@ def get_train_parser():
     parser.add_argument('--grad_accum_steps', type=int, default=1, help='Number of gradient accumulation steps')
     parser.add_argument('--amp', action='store_true', help='Enable Automatic Mixed Precision (AMP FP16)')
     parser.add_argument('--clip_grad_norm', type=float, default=0.0, help='Max gradient norm for clipping (0 to disable)')
-    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader workers')
+    parser.add_argument('--num_workers', type=int, default=2, help='DataLoader workers (default: 2 for multi-process memory safety)')
     parser.add_argument('--val_every', type=int, default=5, help='Validation frequency in epochs')
     parser.add_argument('--diagnose', action='store_true', help='Run per-class performance tracking and failure diagnosis during validation')
     parser.add_argument('--diagnose_every_steps', type=int, default=100, help='Print running diagnostic stats every N training steps (0 to disable)')

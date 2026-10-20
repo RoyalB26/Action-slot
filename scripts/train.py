@@ -4,6 +4,7 @@ import os
 os.environ['MPLBACKEND'] = 'Agg'
 import sys
 import time
+import gc
 import math
 import numpy as np
 import torch
@@ -345,9 +346,14 @@ def evaluate(
     all_gts = np.concatenate(all_gts, axis=0)      # Shape: (N, 64)
     mAP = calculate_mAP(all_gts, all_preds)
 
+    del all_preds, all_gts
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     diag_summary = {}
     if tracker is not None:
-        diag_summary = tracker.compute_summary()
+        diag_summary = tracker.compute_summary(clear_buffers=True)
 
     return loss_meter.avg, mAP, diag_summary
 
@@ -606,6 +612,11 @@ def main():
                         wandb_metrics["attention/sample_heatmap"] = wandb.Image(plot_files[-1], caption=f"Epoch {epoch} Attention Heatmap")
 
                 wandb.log(wandb_metrics)
+
+        # Garbage collection & CUDA cache cleaning after each epoch to prevent OOM
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         if accelerator is not None:
             accelerator.wait_for_everyone()
