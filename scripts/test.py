@@ -1,6 +1,7 @@
 """Inference script generating test set predictions saved to a pickle file."""
 
 import os
+os.environ['MPLBACKEND'] = 'Agg'
 import sys
 import pickle
 import numpy as np
@@ -52,10 +53,11 @@ def main():
             # Input video frames: list of seq_len tensors with shape (B, 3, 128, 384)
             videos = [f.to(device, dtype=torch.float32) for f in batch['videos']]
 
-            if hasattr(model, 'slot_attention'):
-                pred_ego, pred_actor, _ = model(videos)  # pred_actor shape: (B, 64)
+            outputs = model(videos)
+            if len(outputs) == 3:
+                pred_ego, pred_actor, _ = outputs
             else:
-                pred_ego, pred_actor = model(videos)
+                pred_ego, pred_actor = outputs
 
             if getattr(args, 'allocated_slot', False):
                 pred_actor_prob = torch.sigmoid(pred_actor).cpu().numpy()  # Shape: (B, 64)

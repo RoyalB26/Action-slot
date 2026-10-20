@@ -115,10 +115,11 @@ def main():
             videos = [f.to(device, dtype=torch.float32) for f in batch['videos']]
             label_actor = batch['gt_actor'].to(device)  # Shape: (B, 64)
 
-            if hasattr(model, 'slot_attention'):
-                _, pred_actor, _ = model(videos)       # pred_actor shape: (B, 64)
+            outputs = model(videos)
+            if len(outputs) == 3:
+                _, pred_actor, _ = outputs
             else:
-                _, pred_actor = model(videos)
+                _, pred_actor = outputs
 
             pred_probs = torch.sigmoid(pred_actor).cpu().numpy()  # Shape: (B, 64)
             all_preds.append(pred_probs)

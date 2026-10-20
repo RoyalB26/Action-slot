@@ -115,19 +115,23 @@ def train_one_epoch(
 
         # Forward pass (autocast handled by accelerator or native torch.amp)
         if accelerator is not None:
-            if hasattr(model, 'slot_attention'):
-                pred_ego, pred_actor, attn = model(videos)
+            outputs = model(videos)
+            if len(outputs) == 3:
+                pred_ego, pred_actor, attn = outputs
             else:
-                pred_ego, pred_actor = model(videos)
+                pred_ego, pred_actor = outputs
+                attn = None
             total_loss, loss_ego, loss_actor = criterion(pred_ego, pred_actor, label_ego, label_actor)
             loss = total_loss / grad_accum_steps
             accelerator.backward(loss)
         else:
             with torch.amp.autocast(device_type=device_type, enabled=amp_enabled):
-                if hasattr(model, 'slot_attention'):
-                    pred_ego, pred_actor, attn = model(videos)
+                outputs = model(videos)
+                if len(outputs) == 3:
+                    pred_ego, pred_actor, attn = outputs
                 else:
-                    pred_ego, pred_actor = model(videos)
+                    pred_ego, pred_actor = outputs
+                    attn = None
 
                 total_loss, loss_ego, loss_actor = criterion(pred_ego, pred_actor, label_ego, label_actor)
                 loss = total_loss / grad_accum_steps
@@ -282,18 +286,20 @@ def evaluate(
                 label_ego = batch['gt_ego'].to(device)
 
             if accelerator is not None:
-                if hasattr(model, 'slot_attention'):
-                    pred_ego, pred_actor, attn = model(videos)
+                outputs = model(videos)
+                if len(outputs) == 3:
+                    pred_ego, pred_actor, attn = outputs
                 else:
-                    pred_ego, pred_actor = model(videos)
+                    pred_ego, pred_actor = outputs
                     attn = None
                 total_loss, _, _ = criterion(pred_ego, pred_actor, label_ego, label_actor)
             else:
                 with torch.amp.autocast(device_type=device_type, enabled=amp_enabled):
-                    if hasattr(model, 'slot_attention'):
-                        pred_ego, pred_actor, attn = model(videos)
+                    outputs = model(videos)
+                    if len(outputs) == 3:
+                        pred_ego, pred_actor, attn = outputs
                     else:
-                        pred_ego, pred_actor = model(videos)
+                        pred_ego, pred_actor = outputs
                         attn = None
 
                     total_loss, _, _ = criterion(pred_ego, pred_actor, label_ego, label_actor)
