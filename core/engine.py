@@ -21,6 +21,7 @@ from utils.attention_dumper import (
     render_all_slots_from_file,
 )
 from utils.taco_labels import TACO_ACTOR_LABELS
+from utils.tracking_logger import append_validation_tracking_log
 
 
 def calculate_mAP(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -361,6 +362,18 @@ class Trainer:
                         best_path = os.path.join(self.save_dir, "best_model.pth")
                         torch.save(unwrapped.state_dict(), best_path)
                         print(f">> Saved new best model (mAP: {self.best_map:.4f}) to {best_path}")
+
+                    # Append to validation tracking report file and print to console
+                    tracking_file = os.path.join(self.save_dir, "val_tracking.txt")
+                    per_class_list = val_diag.get("all_actor_classes", []) if val_diag else []
+                    append_validation_tracking_log(
+                        file_path=tracking_file,
+                        epoch=epoch,
+                        best_map=self.best_map,
+                        current_map=val_map,
+                        per_class_reports=per_class_list,
+                        print_to_terminal=True,
+                    )
 
             # Log to Excel & WandB on main process
             if self.is_main and self.excel_logger is not None:

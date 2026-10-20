@@ -11,6 +11,11 @@ from .visualizer import (
     save_attention_grid,
     save_single_slot_all_frames,
 )
+from .tracking_logger import (
+    format_validation_tracking_text,
+    append_validation_tracking_log,
+    TACO_ACTION_GROUPS,
+)
 from .attention_dumper import (
     save_attention_matrix,
     render_all_slots_from_file,
@@ -33,4 +38,7 @@ __all__ = [
     "save_attention_matrix",
     "render_all_slots_from_file",
     "visualize_best_and_worst_slots",
+    "format_validation_tracking_text",
+    "append_validation_tracking_log",
+    "TACO_ACTION_GROUPS",
 ]
