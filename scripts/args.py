@@ -35,6 +35,8 @@ def get_train_parser():
     parser.add_argument('--bg_mask', action='store_true', help='Supervise background mask')
     parser.add_argument('--obj_mask', action='store_true', help='Supervise object masks')
     parser.add_argument('--bg_upsample', type=int, default=4, help='Background mask upsampling factor')
+    parser.add_argument('--mask_every_frame', type=int, default=2, help='Downsample frame stride for attention/mask supervision')
+    parser.add_argument('--box', action='store_true', help='Enable bounding box / Hungarian matching in actor loss')
 
     # Loss parameters
     parser.add_argument('--loss_name', type=str, default='action_slot_loss', help='Loss function name registered in LOSSES (e.g. action_slot_loss, focal_loss)')
