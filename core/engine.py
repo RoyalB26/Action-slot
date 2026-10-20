@@ -28,6 +28,31 @@ def calculate_mAP(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.mean(ap_list)) if len(ap_list) > 0 else 0.0
 
 
+def extract_gradient_stats(model: torch.nn.Module) -> Tuple[float, Dict[str, float]]:
+    """Extract total grad norm and module-wise gradient norms from model parameters.
+
+    Returns:
+        tuple[float, dict[str, float]]: (total_grad_norm, grad_dict)
+    """
+    total_grad_sq = 0.0
+    grad_dict = {}
+
+    # Strip wrapper (e.g. DDP, DataParallel) if present
+    base_model = getattr(model, 'module', model)
+
+    for name, param in base_model.named_parameters():
+        if param.requires_grad and param.grad is not None:
+            g_norm = param.grad.data.norm(2).item()
+            total_grad_sq += g_norm ** 2
+            prefix = name.split('.')[0]
+            grad_dict[f"grad_norm_{prefix}"] = grad_dict.get(f"grad_norm_{prefix}", 0.0) + (g_norm ** 2)
+
+    total_grad_norm = float(np.sqrt(total_grad_sq))
+    for k in list(grad_dict.keys()):
+        grad_dict[k] = float(np.sqrt(grad_dict[k]))
+    return total_grad_norm, grad_dict
+
+
 class Trainer:
     """Standardized training engine handling multi-GPU DDP, validation, logging, and memory lifecycle."""
 
@@ -78,7 +103,7 @@ class Trainer:
 
         self.best_map = 0.0
 
-    def train_one_epoch(self, epoch: int) -> float:
+    def train_one_epoch(self, epoch: int) -> Tuple[float, Optional[Tuple[float, Dict[str, float]]]]:
         """Execute one complete training epoch."""
         self.model.train()
         loss_meter = AverageMeter()
@@ -86,6 +111,8 @@ class Trainer:
 
         if self.train_tracker is not None:
             self.train_tracker.reset()
+
+        last_grad_info = None
 
         grad_accum_steps = getattr(self.args, 'grad_accum_steps', 1)
         clip_grad_norm = getattr(self.args, 'clip_grad_norm', 0.0)
@@ -124,6 +151,10 @@ class Trainer:
                             filter(lambda p: p.requires_grad, self.model.parameters()),
                             max_norm=clip_grad_norm
                         )
+                    # Capture gradients right before zero_grad
+                    unwrapped_for_grad = self.accelerator.unwrap_model(self.model)
+                    last_grad_info = extract_gradient_stats(unwrapped_for_grad)
+
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                 else:
@@ -132,6 +163,9 @@ class Trainer:
                             filter(lambda p: p.requires_grad, self.model.parameters()),
                             max_norm=clip_grad_norm
                         )
+                    # Capture gradients right before zero_grad
+                    last_grad_info = extract_gradient_stats(self.model)
+
                     self.optimizer.step()
                     self.optimizer.zero_grad()
 
@@ -171,7 +205,7 @@ class Trainer:
                     diag_file = os.path.join(self.save_dir, "train_diagnostics_live.json")
                     self.train_tracker.save_json(diag_file)
 
-        return loss_meter.avg
+        return loss_meter.avg, last_grad_info
 
     @torch.no_grad()
     def evaluate(self, epoch: Optional[int] = None) -> Tuple[float, float, dict]:
@@ -263,7 +297,7 @@ class Trainer:
             print("Starting training via Modular Engine...")
 
         for epoch in range(1, epochs + 1):
-            train_loss = self.train_one_epoch(epoch)
+            train_loss, train_grad_info = self.train_one_epoch(epoch)
 
             train_diag = None
             if self.is_main:
@@ -314,6 +348,7 @@ class Trainer:
                     model=unwrapped_model,
                     optimizer=self.optimizer,
                     diag_summary=val_diag or train_diag,
+                    grad_info=train_grad_info,
                 )
 
                 if self.use_wandb:

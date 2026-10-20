@@ -26,11 +26,10 @@ class ActionSlotModel(BaseActionModel):
         num_ego_class: int = 7,
         num_actor_class: int = 64,
         backbone_name: str = "x3d",
-        head_name: Optional[str] = None,
+        head_name: str = "linear_head",
         num_slots: int = 64,
         slot_dim: int = 256,
         ego_c: int = 64,
-        allocated_slot: bool = False,
         bg_slot: bool = False,
         resolution3d: tuple = (16, 8, 24),
         dropout: float = 0.5,
@@ -42,7 +41,7 @@ class ActionSlotModel(BaseActionModel):
         self.num_slots = num_slots
         self.slot_dim = slot_dim
         self.ego_c = ego_c
-        self.allocated_slot = allocated_slot
+        self.head_name = head_name
 
         # 1. Modular Backbone
         self.backbone = BACKBONES.build(backbone_name)
@@ -77,14 +76,10 @@ class ActionSlotModel(BaseActionModel):
             input_dim=self.slot_dim,
             resolution=list(resolution3d),
             num_actor_class=num_actor_class,
-            allocated_slot=allocated_slot,
         )
 
         # 5. Modular Classification Head
-        if head_name is None:
-            head_name = "allocated_head" if allocated_slot else "linear_head"
-
-        actor_classes_in_head = num_actor_class if allocated_slot else (num_actor_class + 1)
+        actor_classes_in_head = num_actor_class if head_name == "allocated_head" else (num_actor_class + 1)
         self.head = HEADS.build(
             head_name,
             in_channel=self.slot_dim,

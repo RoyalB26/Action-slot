@@ -15,9 +15,9 @@ def build_model(args, num_ego_class: int = 7, num_actor_class: int = 64):
         "num_ego_class": num_ego_class,
         "num_actor_class": num_actor_class,
         "backbone_name": getattr(args, 'backbone', 'x3d'),
+        "head_name": getattr(args, 'head_name', 'linear_head'),
         "num_slots": getattr(args, 'num_slots', 64),
         "slot_dim": getattr(args, 'channel', 256),
-        "allocated_slot": getattr(args, 'allocated_slot', False),
         "bg_slot": getattr(args, 'bg_slot', False),
         "dropout": 0.5,
     }

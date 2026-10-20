@@ -93,7 +93,7 @@ def main():
 
     # 4. Instantiate Modular Model & Loss via Registry
     if is_main:
-        print(f"Instantiating model '{args.model_name}' (backbone='{getattr(args, 'backbone', 'x3d')}') via Registry...")
+        print(f"Instantiating model '{args.model_name}' (backbone='{getattr(args, 'backbone', 'x3d')}, head= {getattr(args, 'head_name', 'linear_head')}') via Registry...")
     model = build_model(args, num_ego_class=num_ego_class, num_actor_class=num_actor_class)
     criterion = build_loss(args, num_actor_class=num_actor_class)
 
@@ -116,11 +116,23 @@ def main():
 
     # 7. Print configuration
     if is_main:
+        base_m = accelerator.unwrap_model(model) if accelerator is not None else model
+        total_params = sum(p.numel() for p in base_m.parameters())
+        trainable_params = sum(p.numel() for p in base_m.parameters() if p.requires_grad)
+        num_train_data = len(train_dataset)
+        num_val_data = len(val_dataset)
         num_procs = accelerator.num_processes if accelerator is not None else 1
         effective_batch_size = args.batch_size * args.grad_accum_steps * num_procs
+
         print(f"Training configuration:")
+        print(f"  - Total Parameters : {total_params:,} ({total_params / 1e6:.2f}M)")
+        print(f"  - Trainable Params : {trainable_params:,} ({trainable_params / 1e6:.2f}M)")
+        print(f"  - Total Train Data : {num_train_data:,} samples")
+        print(f"  - Total Val Data   : {num_val_data:,} samples")
+        print(f"  - Total Epochs     : {args.epochs}")
+        print(f"  - Learning Rate    : {args.lr}")
         print(f"  - Micro batch size : {args.batch_size}")
-        print(f"  - Accumulation steps: {args.grad_accum_steps}")
+        print(f"  - Accumulation step: {args.grad_accum_steps}")
         print(f"  - Total processes  : {num_procs}")
         print(f"  - Effective batch  : {effective_batch_size}")
         print(f"  - AMP Mixed Prec   : {'Enabled' if args.amp else 'Disabled'}")

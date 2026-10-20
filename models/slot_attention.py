@@ -50,7 +50,7 @@ class SlotAttention(nn.Module):
         eps=1e-8,
         input_dim=64,
         resolution=[16, 8, 24],
-        allocated_slot=True,
+        allocated_slot=False,
     ):
         super().__init__()
         self.dim = dim

@@ -24,9 +24,9 @@ def get_train_parser():
     # Model arguments
     parser.add_argument('--model_name', type=str, default='action_slot', choices=['action_slot', 'x3d'], help='Model type')
     parser.add_argument('--backbone', type=str, default='x3d', help='Feature extractor backbone')
+    parser.add_argument('--head_name', type=str, default='linear_head', choices=['linear_head', 'allocated_head', 'deformable_head', 'head'], help='Classification head type')
     parser.add_argument('--num_slots', type=int, default=64, help='Number of slots')
     parser.add_argument('--channel', type=int, default=256, help='Feature channel dimension')
-    parser.add_argument('--allocated_slot', action='store_true', help='Use class-allocated slots')
     parser.add_argument('--bg_slot', action='store_true', help='Append extra background slot')
 
     # Attention parameters
@@ -36,7 +36,8 @@ def get_train_parser():
     parser.add_argument('--obj_mask', action='store_true', help='Supervise object masks')
     parser.add_argument('--bg_upsample', type=int, default=4, help='Background mask upsampling factor')
 
-    # Loss weights
+    # Loss parameters
+    parser.add_argument('--loss_name', type=str, default='action_slot_loss', help='Loss function name registered in LOSSES (e.g. action_slot_loss, focal_loss)')
     parser.add_argument('--bce_pos_weight', type=float, default=10.0, help='Positive weight for BCE loss')
     parser.add_argument('--ce_pos_weight', type=float, default=1.0, help='Positive weight for CE loss')
     parser.add_argument('--ce_neg_weight', type=float, default=0.05, help='Negative weight for CE loss')
@@ -77,12 +78,12 @@ def get_eval_parser():
     parser.add_argument('--root', type=str, default='', help='Path to raw dataset frames')
     parser.add_argument('--model_name', type=str, default='action_slot', choices=['action_slot', 'x3d'], help='Model type')
     parser.add_argument('--backbone', type=str, default='x3d', help='Backbone network')
+    parser.add_argument('--head_name', type=str, default='linear_head', choices=['linear_head', 'allocated_head', 'deformable_head', 'head'], help='Classification head type')
     parser.add_argument('--num_slots', type=int, default=64, help='Number of slots')
     parser.add_argument('--seq_len', type=int, default=16, help='Input sequence length')
     parser.add_argument('--img_height', type=int, default=128, help='Input frame image height')
     parser.add_argument('--img_width', type=int, default=384, help='Input frame image width')
     parser.add_argument('--channel', type=int, default=256, help='Feature channel dimension')
-    parser.add_argument('--allocated_slot', action='store_true', help='Class-allocated slot setting')
     parser.add_argument('--bg_slot', action='store_true', help='Include background slot')
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint (.pth)')
     parser.add_argument('--device', type=str, default='cuda', help='Compute device')
@@ -105,12 +106,12 @@ def get_test_parser():
     parser.add_argument('--root', type=str, required=True, help='Path to test video frames')
     parser.add_argument('--model_name', type=str, default='action_slot', choices=['action_slot', 'x3d'], help='Model type')
     parser.add_argument('--backbone', type=str, default='x3d', help='Backbone network')
+    parser.add_argument('--head_name', type=str, default='linear_head', choices=['linear_head', 'allocated_head', 'deformable_head', 'head'], help='Classification head type')
     parser.add_argument('--num_slots', type=int, default=64, help='Number of slots')
     parser.add_argument('--seq_len', type=int, default=16, help='Frames per clip')
     parser.add_argument('--img_height', type=int, default=128, help='Input frame image height')
     parser.add_argument('--img_width', type=int, default=384, help='Input frame image width')
     parser.add_argument('--channel', type=int, default=256, help='Feature channel dimension')
-    parser.add_argument('--allocated_slot', action='store_true', help='Use class-allocated slots')
     parser.add_argument('--bg_slot', action='store_true', help='Include background slot')
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint (.pth)')
     parser.add_argument('--device', type=str, default='cuda', help='Device target')
