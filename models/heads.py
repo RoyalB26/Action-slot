@@ -82,8 +82,9 @@ class DeformableSlotTemporalDetectionHead(nn.Module):
 
     def __init__(
         self,
-        num_slots: int,
-        dim: int,
+        in_channel: int = 256,
+        dim: int = None,
+        num_slots: int = 64,
         H: int = 8,
         W: int = 24,
         num_actor_classes: int = 64,
@@ -91,8 +92,11 @@ class DeformableSlotTemporalDetectionHead(nn.Module):
         num_heads: int = 4,
         num_points: int = 4,
         ego_channel: int = 64,
+        **kwargs
     ):
         super().__init__()
+        dim = dim or in_channel
+        self.in_channel = in_channel
         self.num_slots = num_slots
         self.dim = dim
         self.H = H
@@ -108,7 +112,10 @@ class DeformableSlotTemporalDetectionHead(nn.Module):
         self.out_proj = nn.Linear(dim, dim)
 
         self.temporal_pooling = nn.AdaptiveAvgPool1d(1)
-        self.fc_actor = nn.Linear(dim, 1)
+        if self.num_slots == self.num_actor_classes:
+            self.fc_actor = nn.Linear(dim, 1)
+        else:
+            self.fc_actor = nn.Linear(dim, self.num_actor_classes)
 
         if num_ego_classes > 0:
             self.fc_ego = nn.Sequential(
@@ -148,6 +155,9 @@ class DeformableSlotTemporalDetectionHead(nn.Module):
         slot_features = slots + self.out_proj(aggregated)
 
         # Classification logits
-        y_actor = self.fc_actor(slot_features).squeeze(-1)
+        if self.num_slots == self.num_actor_classes:
+            y_actor = self.fc_actor(slot_features).squeeze(-1)  # (B, num_actor_classes)
+        else:
+            y_actor = self.fc_actor(slot_features)  # (B, S, num_actor_classes)
         y_ego = self.fc_ego(ego_x) if self.fc_ego is not None and ego_x is not None else None
         return y_ego, y_actor

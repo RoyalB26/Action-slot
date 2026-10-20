@@ -84,10 +84,14 @@ class ActionSlotModel(BaseActionModel):
         )
 
         # 5. Modular Classification Head
-        actor_classes_in_head = num_actor_class if head_name == "allocated_head" else (num_actor_class + 1)
+        actor_classes_in_head = num_actor_class if head_name in ["allocated_head", "deformable_head"] else (num_actor_class + 1)
         self.head = HEADS.build(
             head_name,
             in_channel=self.slot_dim,
+            num_slots=actual_slots,
+            dim=self.slot_dim,
+            H=resolution3d[1],
+            W=resolution3d[2],
             num_ego_classes=self.num_ego_class,
             num_actor_classes=actor_classes_in_head,
             ego_channel=self.ego_c,
