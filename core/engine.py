@@ -231,6 +231,11 @@ class Trainer:
         saved_sample_videos = None
         saved_sample_attn = None
 
+        # Buffers to find specific samples where best slot is correct and worst slot is incorrect
+        best_vis_sample = None    # {"videos": ..., "attn": ..., "batch_idx": ...}
+        worst_vis_sample = None   # {"videos": ..., "attn": ..., "batch_idx": ...}
+        buffered_batches = []     # Keep up to 20 batches of (videos, attn, pred_probs, label_actor) for slot targeting
+
         for batch_idx, batch in enumerate(iterator):
             if self.accelerator is not None:
                 videos = [f.to(dtype=torch.float32) for f in batch['videos']]
@@ -268,26 +273,38 @@ class Trainer:
                     target_ego=targets.get("target_ego")
                 )
 
-            # Save sample attention matrix and prepare best/worst slot visualization
+            # Save sample attention matrix and cache candidates for best/worst visualization
             attn = preds.get("attn")
-            if self.is_main and self.attn_vis_dir and attn is not None and not attn_saved:
-                ep_tag = f"epoch_{epoch}_" if epoch is not None else ""
-                # Dump attention matrix to .npz file
-                mat_file = os.path.join(self.attn_vis_dir, f"{ep_tag}attention_matrix.npz")
-                try:
-                    save_attention_matrix(
-                        attn_tensor=attn,
-                        frames=videos,
-                        save_path=mat_file,
-                        extra_metadata={"epoch": epoch, "batch_idx": batch_idx},
-                    )
-                    # Cache sample videos and attn for epoch best/worst visualization after tracker computation
-                    saved_sample_videos = videos
-                    saved_sample_attn = attn
-                    attn_saved = True
-                except Exception as e:
-                    print(f"Warning: Failed to save attention matrix: {e}")
-                    attn_saved = True
+            if self.is_main and self.attn_vis_dir and attn is not None:
+                if not attn_saved:
+                    ep_tag = f"epoch_{epoch}_" if epoch is not None else ""
+                    mat_file = os.path.join(self.attn_vis_dir, f"{ep_tag}attention_matrix.npz")
+                    try:
+                        save_attention_matrix(
+                            attn_tensor=attn,
+                            frames=videos,
+                            save_path=mat_file,
+                            extra_metadata={"epoch": epoch, "batch_idx": batch_idx},
+                        )
+                        saved_sample_videos = videos
+                        saved_sample_attn = attn
+                        attn_saved = True
+                    except Exception as e:
+                        print(f"Warning: Failed to save attention matrix: {e}")
+                        attn_saved = True
+
+                # Buffer up to 30 batches for finding true positive (correct) and error (incorrect) samples
+                if len(buffered_batches) < 30:
+                    cpu_videos = [f.detach().cpu() for f in videos]
+                    cpu_attn = attn.detach().cpu()
+                    cpu_preds = pred_probs.detach().cpu().numpy()
+                    cpu_gts = label_actor.detach().cpu().numpy()
+                    buffered_batches.append({
+                        "videos": cpu_videos,
+                        "attn": cpu_attn,
+                        "preds": cpu_preds,
+                        "gts": cpu_gts,
+                    })
 
         all_preds = np.concatenate(all_preds, axis=0)
         all_gts = np.concatenate(all_gts, axis=0)
@@ -306,13 +323,92 @@ class Trainer:
         if self.is_main and self.attn_vis_dir and saved_sample_videos is not None and saved_sample_attn is not None:
             try:
                 per_class = diag_summary.get("all_actor_classes", [])
+                
+                # Determine best and worst slot indices
+                active_classes = [c for c in per_class if c.get("support", 0) > 0 and c.get("class_id", 0) < self.num_actor_class]
+                if active_classes:
+                    best_cand = max(active_classes, key=lambda x: x.get("ap", 0.0))
+                    worst_cand = min(active_classes, key=lambda x: x.get("ap", 0.0))
+                    best_idx = best_cand["class_id"]
+                    worst_idx = worst_cand["class_id"]
+                else:
+                    best_idx = 0
+                    worst_idx = min(1, self.num_actor_class - 1)
+
+                # Search buffered batches for a sample where best_slot is CORRECT (TP preferred, or TN)
+                # and a sample where worst_slot is INCORRECT (FN or FP)
+                best_frames = None
+                best_attn = None
+                worst_frames = None
+                worst_attn = None
+
+                # 1. Search for best slot correct sample (prioritize True Positive where gt == 1 and pred >= 0.5)
+                for cand in buffered_batches:
+                    preds_b = cand["preds"]
+                    gts_b = cand["gts"]
+                    # TP check
+                    tp_mask = np.where((preds_b[:, best_idx] >= 0.5) & (gts_b[:, best_idx] == 1))[0]
+                    if len(tp_mask) > 0:
+                        i = tp_mask[0]
+                        best_frames = [f[i] for f in cand["videos"]]
+                        best_attn = cand["attn"][i]
+                        break
+
+                # Fallback for best slot if no TP found in buffer: check TN (gt == 0 and pred < 0.5)
+                if best_frames is None:
+                    for cand in buffered_batches:
+                        preds_b = cand["preds"]
+                        gts_b = cand["gts"]
+                        correct_mask = np.where((preds_b[:, best_idx] >= 0.5) == (gts_b[:, best_idx] == 1))[0]
+                        if len(correct_mask) > 0:
+                            i = correct_mask[0]
+                            best_frames = [f[i] for f in cand["videos"]]
+                            best_attn = cand["attn"][i]
+                            break
+
+                # 2. Search for worst slot incorrect sample (prioritize False Negative where gt == 1 and pred < 0.5, then False Positive)
+                for cand in buffered_batches:
+                    preds_b = cand["preds"]
+                    gts_b = cand["gts"]
+                    # FN check
+                    fn_mask = np.where((preds_b[:, worst_idx] < 0.5) & (gts_b[:, worst_idx] == 1))[0]
+                    if len(fn_mask) > 0:
+                        i = fn_mask[0]
+                        worst_frames = [f[i] for f in cand["videos"]]
+                        worst_attn = cand["attn"][i]
+                        break
+
+                # If no FN, look for FP (gt == 0 and pred >= 0.5)
+                if worst_frames is None:
+                    for cand in buffered_batches:
+                        preds_b = cand["preds"]
+                        gts_b = cand["gts"]
+                        fp_mask = np.where((preds_b[:, worst_idx] >= 0.5) & (gts_b[:, worst_idx] == 0))[0]
+                        if len(fp_mask) > 0:
+                            i = fp_mask[0]
+                            worst_frames = [f[i] for f in cand["videos"]]
+                            worst_attn = cand["attn"][i]
+                            break
+
+                # Fallback to default saved batch sample if not found in buffer
+                if best_frames is None:
+                    best_frames = saved_sample_videos
+                    best_attn = saved_sample_attn
+                if worst_frames is None:
+                    worst_frames = saved_sample_videos
+                    worst_attn = saved_sample_attn
+
                 visualize_best_and_worst_slots(
-                    frames=saved_sample_videos,
-                    attn_tensor=saved_sample_attn,
+                    frames=best_frames,
+                    attn_tensor=best_attn,
                     output_dir=self.attn_vis_dir,
                     epoch=epoch,
                     slot_names=TACO_ACTOR_LABELS,
                     per_class_summary=per_class,
+                    worst_frames=worst_frames,
+                    worst_attn_tensor=worst_attn,
+                    best_slot_idx=best_idx,
+                    worst_slot_idx=worst_idx,
                 )
             except Exception as e:
                 print(f"Warning: Failed to render best/worst slot visualizations: {e}")

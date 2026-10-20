@@ -106,7 +106,9 @@ def save_single_slot_all_frames(
         save_path (str): Output file path (.png).
         title (str, optional): Header title.
     """
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    parent_dir = os.path.dirname(save_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
 
     if isinstance(attn_tensor, torch.Tensor):
         attn = attn_tensor.detach().cpu().numpy()
@@ -161,7 +163,9 @@ def save_attention_grid(
     title="Action-Slot Spatiotemporal Attention",
 ):
     """Backward-compatible grid visualization for selected frames and top slots."""
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    parent_dir = os.path.dirname(save_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
 
     if isinstance(attn_tensor, torch.Tensor):
         attn = attn_tensor.detach().cpu().numpy()

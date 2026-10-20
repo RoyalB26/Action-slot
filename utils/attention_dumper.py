@@ -133,21 +133,28 @@ def visualize_best_and_worst_slots(
     epoch: Optional[int] = None,
     slot_names: Optional[List[str]] = None,
     per_class_summary: Optional[List[dict]] = None,
+    worst_frames=None,
+    worst_attn_tensor=None,
+    best_slot_idx: Optional[int] = None,
+    worst_slot_idx: Optional[int] = None,
 ) -> dict:
-    """Identify 1 best and 1 worst slot and save their full T-frame visualizations.
+    """Identify best and worst performing slots and render full T-frame visualizations.
 
-    Slot ranking strategy:
-        - If per_class_summary is provided (from tracker), picks class with highest AP as best
-          and class with lowest AP (with positive support) as worst.
-        - Otherwise, ranks slots by mean spatiotemporal attention activation energy.
+    When worst_frames and worst_attn_tensor are supplied, best_slot renders a sample
+    where the model was CORRECT for that slot, and worst_slot renders a sample
+    where the model was INCORRECT (failed) for that slot.
 
     Args:
-        frames: Video frames (T, 3, H, W).
-        attn_tensor: (T, S, H, W) or (1, T, S, H, W).
+        frames: Video frames for best slot (T, 3, H, W).
+        attn_tensor: Attention for best slot (T, S, H, W) or (1, T, S, H, W).
         output_dir: Destination folder.
         epoch: Current epoch.
         slot_names: Labels for the slots.
         per_class_summary: Optional per-class performance dictionary from PerformanceTracker.
+        worst_frames: Video frames specifically for worst slot (T, 3, H, W).
+        worst_attn_tensor: Attention specifically for worst slot.
+        best_slot_idx: Explicit best slot index if predetermined.
+        worst_slot_idx: Explicit worst slot index if predetermined.
 
     Returns:
         dict: Paths to generated best and worst images.
@@ -165,11 +172,11 @@ def visualize_best_and_worst_slots(
     T, S, H_att, W_att = attn.shape
     names = slot_names or TACO_ACTOR_LABELS
 
-    best_idx = 0
-    worst_idx = min(1, S - 1)
-
-    # 1. Determine best and worst slots
-    if per_class_summary and len(per_class_summary) > 0:
+    # 1. Determine best and worst slots if not explicitly passed
+    if best_slot_idx is not None and worst_slot_idx is not None:
+        best_idx = best_slot_idx
+        worst_idx = worst_slot_idx
+    elif per_class_summary and len(per_class_summary) > 0:
         # Filter classes with support > 0
         active = [c for c in per_class_summary if c.get("support", 0) > 0 and c.get("class_id", 0) < S]
         if active:
@@ -209,20 +216,29 @@ def visualize_best_and_worst_slots(
         slot_idx=best_idx,
         slot_name=best_name,
         save_path=best_file,
-        title=f"[BEST SLOT] Epoch {epoch} - Slot #{best_idx:02d} [{best_name}] (All {T} Frames)",
+        title=f"[BEST SLOT - CORRECT PREDICTION] Epoch {epoch} - Slot #{best_idx:02d} [{best_name}] (All {T} Frames)",
     )
 
+    # Use distinct failure frames/attn for worst slot if provided, else fallback to frames/attn
+    target_worst_frames = worst_frames if worst_frames is not None else frames
+    target_worst_attn = worst_attn_tensor if worst_attn_tensor is not None else attn
+    if isinstance(target_worst_attn, torch.Tensor):
+        target_worst_attn = target_worst_attn.detach().cpu().numpy()
+    if target_worst_attn.ndim == 5:
+        target_worst_attn = target_worst_attn[0]
+    worst_T = target_worst_attn.shape[0]
+
     save_single_slot_all_frames(
-        frames=frames,
-        attn_tensor=attn,
+        frames=target_worst_frames,
+        attn_tensor=target_worst_attn,
         slot_idx=worst_idx,
         slot_name=worst_name,
         save_path=worst_file,
-        title=f"[WORST SLOT] Epoch {epoch} - Slot #{worst_idx:02d} [{worst_name}] (All {T} Frames)",
+        title=f"[WORST SLOT - INCORRECT PREDICTION] Epoch {epoch} - Slot #{worst_idx:02d} [{worst_name}] (All {worst_T} Frames)",
     )
 
-    print(f">> Saved best slot image: {best_file}")
-    print(f">> Saved worst slot image: {worst_file}")
+    print(f">> Saved best slot image (Correct sample): {best_file}")
+    print(f">> Saved worst slot image (Incorrect sample): {worst_file}")
 
     return {
         "best_slot": {"index": best_idx, "name": best_name, "path": best_file},
