@@ -28,12 +28,14 @@ class ExcelTrainingLogger:
         self.qkv_records = []
         self.per_class_dfs = []
 
-    def extract_model_stats(self, model, optimizer=None):
+    def extract_model_stats(self, model, optimizer=None, grad_info=None):
         """Extract all gradient statistics, parameter norms, and SlotAttention Q, K, V metrics.
 
         Args:
             model (torch.nn.Module): Action-Slot or X3D model.
             optimizer (torch.optim.Optimizer, optional): Optimizer to get learning rate.
+            grad_info (tuple[float, dict], optional): Pre-extracted (total_grad_norm, grad_dict)
+                captured before optimizer.zero_grad().
 
         Returns:
             tuple[dict, dict, dict]: (overview_dict, grad_dict, qkv_dict)
@@ -44,33 +46,44 @@ class ExcelTrainingLogger:
             current_lr = optimizer.param_groups[0].get('lr', 0.0)
 
         # 2. Extract Gradients per module and total
-        total_grad_sq = 0.0
         total_param_sq = 0.0
-        grad_dict = {}
         param_dict = {}
 
-        # Inspect major submodules
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                p_norm = param.data.norm(2).item()
-                total_param_sq += p_norm ** 2
-                
-                if param.grad is not None:
-                    g_norm = param.grad.data.norm(2).item()
-                    total_grad_sq += g_norm ** 2
-                else:
-                    g_norm = 0.0
+        if grad_info is not None:
+            total_grad_norm, grad_dict = grad_info
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    p_norm = param.data.norm(2).item()
+                    total_param_sq += p_norm ** 2
+                    prefix = name.split('.')[0]
+                    param_dict[f"param_norm_{prefix}"] = param_dict.get(f"param_norm_{prefix}", 0.0) + (p_norm ** 2)
+        else:
+            total_grad_sq = 0.0
+            grad_dict = {}
 
-                # Group by top-level module prefix
-                prefix = name.split('.')[0]
-                grad_dict[f"grad_norm_{prefix}"] = grad_dict.get(f"grad_norm_{prefix}", 0.0) + (g_norm ** 2)
-                param_dict[f"param_norm_{prefix}"] = param_dict.get(f"param_norm_{prefix}", 0.0) + (p_norm ** 2)
+            # Inspect major submodules
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    p_norm = param.data.norm(2).item()
+                    total_param_sq += p_norm ** 2
+                    
+                    if param.grad is not None:
+                        g_norm = param.grad.data.norm(2).item()
+                        total_grad_sq += g_norm ** 2
+                    else:
+                        g_norm = 0.0
 
-        # Finalize L2 norms
-        total_grad_norm = float(np.sqrt(total_grad_sq))
+                    # Group by top-level module prefix
+                    prefix = name.split('.')[0]
+                    grad_dict[f"grad_norm_{prefix}"] = grad_dict.get(f"grad_norm_{prefix}", 0.0) + (g_norm ** 2)
+                    param_dict[f"param_norm_{prefix}"] = param_dict.get(f"param_norm_{prefix}", 0.0) + (p_norm ** 2)
+
+            total_grad_norm = float(np.sqrt(total_grad_sq))
+            for k in list(grad_dict.keys()):
+                grad_dict[k] = float(np.sqrt(grad_dict[k]))
+
+        # Finalize L2 norms for params
         total_param_norm = float(np.sqrt(total_param_sq))
-        for k in list(grad_dict.keys()):
-            grad_dict[k] = float(np.sqrt(grad_dict[k]))
         for k in list(param_dict.keys()):
             param_dict[k] = float(np.sqrt(param_dict[k]))
 
@@ -143,6 +156,7 @@ class ExcelTrainingLogger:
         model=None,
         optimizer=None,
         diag_summary=None,
+        grad_info=None,
     ):
         """Record epoch full metrics and dump updated spreadsheet to Excel.
 
@@ -155,10 +169,11 @@ class ExcelTrainingLogger:
             model (nn.Module, optional): Model instance for gradient/internal extraction.
             optimizer (Optimizer, optional): Optimizer.
             diag_summary (dict, optional): Diagnostic report from PerformanceTracker.
+            grad_info (tuple, optional): Pre-extracted (total_grad_norm, grad_dict) before zero_grad.
         """
         overview_dict, grad_dict, qkv_dict = {}, {}, {}
         if model is not None:
-            overview_dict, grad_dict, qkv_dict = self.extract_model_stats(model, optimizer)
+            overview_dict, grad_dict, qkv_dict = self.extract_model_stats(model, optimizer, grad_info=grad_info)
 
         # 1. Append Overview Record
         rec = {

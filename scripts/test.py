@@ -1,4 +1,4 @@
-"""Inference script generating test set predictions saved to a pickle file."""
+"""Refactored, decoupled test set inference script."""
 
 import os
 os.environ['MPLBACKEND'] = 'Agg'
@@ -9,67 +9,62 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# Ensure workspace root is in sys.path
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
 from dataset.taco_test import TACO_TEST
-from model import generate_model
+from models import build_model
 from scripts.args import get_test_parser
 
 
 def main():
-    """Main inference loop for unseen test scenarios."""
     args = get_test_parser()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
-    print(f"Loading TACO test dataset from: {args.root}")
-    test_dataset = TACO_TEST(args, split='test', root=args.root)
+    test_dataset = TACO_TEST(args)
     test_loader = DataLoader(
         test_dataset,
-        batch_size=args.batch_size,
+        batch_size=1,
         shuffle=False,
         num_workers=args.num_workers,
+        pin_memory=True,
     )
 
     num_ego_class = 7
     num_actor_class = 64
 
-    print(f"Instantiating model {args.model_name}...")
-    model = generate_model(args, num_ego_class, num_actor_class).to(device)
-
-    print(f"Loading checkpoint from: {args.checkpoint}")
-    state_dict = torch.load(args.checkpoint, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
+    # Build model via registry
+    model = build_model(args, num_ego_class=num_ego_class, num_actor_class=num_actor_class)
+    if args.model_path and os.path.exists(args.model_path):
+        state_dict = torch.load(args.model_path, map_location=device)
+        model.load_state_dict(state_dict)
+        print(f"Loaded checkpoint: {args.model_path}")
+    model = model.to(device)
     model.eval()
 
     save_results = {}
 
-    print("Generating predictions on test set...")
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Testing"):
             scenario = batch['scenario'][0]
-            # Input video frames: list of seq_len tensors with shape (B, 3, 128, 384)
             videos = [f.to(device, dtype=torch.float32) for f in batch['videos']]
 
-            outputs = model(videos)
-            if len(outputs) == 3:
-                pred_ego, pred_actor, _ = outputs
-            else:
-                pred_ego, pred_actor = outputs
+            preds = model(videos)
+            pred_actor = preds["pred_actor"]
 
-            if getattr(args, 'allocated_slot', False):
-                pred_actor_prob = torch.sigmoid(pred_actor).cpu().numpy()  # Shape: (B, 64)
-            else:
-                pred_actor_prob = torch.softmax(pred_actor, dim=-1).cpu().numpy()
+            if pred_actor.ndim == 3:
+                pred_actor = pred_actor.max(dim=1)[0]
+            if pred_actor.shape[-1] > num_actor_class:
+                pred_actor = pred_actor[:, :num_actor_class]
 
+            pred_actor_prob = torch.sigmoid(pred_actor).cpu().numpy()
             save_results[scenario] = pred_actor_prob
 
-    print(f"Saving predictions to: {args.output_pkl}")
-    with open(args.output_pkl, 'wb') as handle:
-        pickle.dump(save_results, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    print("Inference completed successfully!")
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    with open(args.save_path, 'wb') as f:
+        pickle.dump(save_results, f)
+    print(f"Predictions saved to {args.save_path}")
 
 
 if __name__ == '__main__':
