@@ -2,7 +2,7 @@
 
 Tài liệu này cung cấp hướng dẫn và giải thích chi tiết toàn bộ các chỉ số thống kê, tham số huấn luyện, chuẩn gradient, động lực học Attention (Q/K/V) và độ chính xác phân loại theo từng lớp có trong file báo cáo Excel `training_full_metrics.xlsx`.
 
-Workbook này được sinh tự động bởi module [`utils/excel_logger.py`](file:///d:/Study/NYCU/Action-slot/action_slot/utils/excel_logger.py) sau mỗi epoch trong quá trình huấn luyện và đánh giá được điều phối bởi [`core/engine.py`](file:///d:/Study/NYCU/Action-slot/action_slot/core/engine.py).
+Workbook này được sinh tự động bởi module [`utils/excel_logger.py`] sau mỗi epoch trong quá trình huấn luyện và đánh giá được điều phối bởi [`core/engine.py`].
 
 ---
 
@@ -23,13 +23,20 @@ Sheet này ghi lại tiến trình tổng thể của mô hình sau mỗi epoch 
 | Tên Cột | Kiểu Dữ Liệu | Công Thức / Nguồn | Giải Thích Chi Tiết & Ý Nghĩa Chẩn Đoán |
 | :--- | :--- | :--- | :--- |
 | **`Epoch`** | Số nguyên | $1, 2, \dots, N$ | Chỉ số epoch huấn luyện hiện tại. |
-| **`Train_Loss`** | Số thực | Trung bình loss các batch | Giá trị hàm mất mát tổng hợp trung bình trên tập train trong epoch (bao gồm loss phân loại actor, ego action loss, ...). Giảm đều đặn chứng tỏ mô hình đang hội tụ tốt. |
+| **`Train_Loss`** | Số thực | Trung bình loss các batch | Giá trị hàm mất mát tổng hợp trung bình trên tập train trong epoch (bao gồm loss phân loại actor, ego action loss, attention loss...). Giảm đều đặn chứng tỏ mô hình đang hội tụ tốt. |
 | **`Val_Loss`** | Số thực | Trung bình loss tập validation | Giá trị hàm mất mát trên tập kiểm định (validation). Nếu `Train_Loss` tiếp tục giảm nhưng `Val_Loss` tăng liên tục, mô hình đang gặp hiện tượng quá khớp (overfitting). |
+| **`Train_Actor_Loss`** | Số thực | Loss actor train trung bình | Thành phần hàm mất mát phân loại đa nhãn riêng cho các slot hành động của tác tử (actor) trên tập train (BCE / Focal Loss). |
+| **`Train_Ego_Loss`** | Số thực | Loss ego train trung bình | Thành phần hàm mất mát Cross-Entropy riêng cho việc dự đoán 7 hành vi của xe tự hành (ego-vehicle) trên tập train. |
+| **`Train_Attn_Loss`** | Số thực | Loss chú ý train | Hàm mất mát giám sát vùng chú ý không-thời gian của các slot hành động dương tính so với mask mục tiêu (áp dụng trong `BetterActionSlotLoss`). |
+| **`Train_Bg_Attn_Loss`**| Số thực | Loss chú ý nền train | Hàm mất mát giám sát riêng cho slot nền (background slot), phạt nếu slot nền chú ý vào vùng có hành động. |
+| **`Val_Actor_Loss`** | Số thực | Loss actor val trung bình | Thành phần loss phân loại actor trên tập kiểm định validation. |
+| **`Val_Ego_Loss`** | Số thực | Loss ego val trung bình | Thành phần loss dự đoán hành động xe tự hành trên tập kiểm định validation. |
+| **`Val_Attn_Loss`** | Số thực | Loss chú ý val trung bình | Thành phần loss giám sát ma trận attention trên tập kiểm định validation. |
 | **`Train_mAP`** | Số thực | Trung bình AP các lớp trên train | Độ chính xác trung bình mAP (Mean Average Precision) tính trên tất cả 64 lớp hành động actor của tập train. |
 | **`Val_mAP`** | Số thực | Trung bình AP các lớp trên val | Độ chính xác trung bình mAP tính trên tập validation. **Đây là thước đo quan trọng nhất để đánh giá chất lượng mô hình và lựa chọn checkpoint tốt nhất (best checkpoint).** |
 | **`LR`** | Số thực | Learning rate từ optimizer | Tốc độ học (learning rate) hiện tại đang áp dụng cho epoch. |
 | **`Total_Grad_Norm`** | Số thực | $\|\mathbf{g}\|_2 = \sqrt{\sum_i \|\mathbf{g}_i\|_2^2}$ | Chuẩn $L_2$ tổng thể của gradient toàn bộ tham số mô hình ngay trước khi cập nhật optimizer (hoặc trước khi clip gradient). Giá trị $> 5.0$ cảnh báo dao động gradient mạnh; giá trị $< 10^{-4}$ cảnh báo triệt tiêu gradient. |
-| **`Total_Param_Norm`**| Số thực | $\|\mathbf{\theta}\|_2 = \sqrt{\sum_i \|\mathbf{\theta}_i\|_2^2}$ | Chuẩn $L_2$ tổng của tất cả trọng số khả huấn (learnable weights). Giá trị tăng từ từ là bình thường; nếu tăng vọt đột ngột là dấu hiệu bùng nổ trọng số do thiếu kiểm soát regularization. |
+| **`Total_Param_Norm`**| Số thực | $\|\mathbf{\theta}\|_2 = \sqrt{\sum_i \|\mathbf{\theta}_i\|_2^2}$ | Chuẩn $L_2$ tổng của tất cả trọng số có thể huấn luyện (learnable weights). Giá trị tăng từ từ là bình thường; nếu tăng vọt đột ngột là dấu hiệu bùng nổ trọng số do thiếu kiểm soát regularization. |
 | **`Q_Norm`** | Số thực | $\frac{1}{B \cdot S}\sum \|\mathbf{q}\|_2$ | Độ lớn vector trung bình của các Query trong Slot Attention. Đo lường cường độ biểu diễn của các slot query đã học. |
 | **`K_Norm`** | Số thực | $\frac{1}{B \cdot N}\sum \|\mathbf{k}\|_2$ | Độ lớn vector trung bình của các Key được chiếu từ không-thời gian ($T \times H \times W$) của backbone video. |
 | **`V_Norm`** | Số thực | $\frac{1}{B \cdot N}\sum \|\mathbf{v}\|_2$ | Độ lớn vector trung bình của các Value được trích xuất từ đặc trưng video. |
@@ -100,7 +107,7 @@ Cung cấp báo cáo chi tiết về năng lực phân loại của từng lớp
 | **`fp`** | $\sum \mathbb{I}(\hat{y}=1 \land y=0)$ | **False Positives**: Báo động giả (thực tế không có nhưng mô hình đoán có). |
 | **`fn`** | $\sum \mathbb{I}(\hat{y}=0 \land y=1)$ | **False Negatives**: Bỏ sót (thực tế có xảy ra nhưng mô hình không nhận diện được). |
 | **`tn`** | $\sum \mathbb{I}(\hat{y}=0 \land y=0)$ | **True Negatives**: Nhận diện âm tính chính xác. |
-| **`primary_issue`** | Phân loại tự động | Nguyên nhân chính dẫn đến lỗi hoặc trạng thái của lớp do [`PerformanceTracker`](file:///d:/Study/NYCU/Action-slot/action_slot/utils/tracker.py) chuẩn đoán. |
+| **`primary_issue`** | Phân loại tự động | Nguyên nhân chính dẫn đến lỗi hoặc trạng thái của lớp do [`PerformanceTracker`] chuẩn đoán. |
 
 ---
 

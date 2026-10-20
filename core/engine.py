@@ -110,10 +110,11 @@ class Trainer:
 
         self.best_map = 0.0
 
-    def train_one_epoch(self, epoch: int) -> Tuple[float, Optional[Tuple[float, Dict[str, float]]]]:
-        """Execute one complete training epoch."""
+    def train_one_epoch(self, epoch: int) -> Tuple[float, Dict[str, float], Optional[Tuple[float, Dict[str, float]]]]:
+        """Execute one complete training epoch with detailed loss breakdown."""
         self.model.train()
         loss_meter = AverageMeter()
+        loss_component_meters: Dict[str, AverageMeter] = {}
         self.optimizer.zero_grad()
 
         if self.train_tracker is not None:
@@ -186,12 +187,24 @@ class Trainer:
                 )
 
             loss_meter.update(total_loss.item(), n=targets["target_actor"].size(0))
+            if isinstance(loss_dict, dict):
+                for k, v in loss_dict.items():
+                    if k != "total_loss" and v is not None:
+                        if k not in loss_component_meters:
+                            loss_component_meters[k] = AverageMeter()
+                        loss_component_meters[k].update(v.item() if isinstance(v, torch.Tensor) else float(v), n=targets["target_actor"].size(0))
 
             # Logging & terminal status
             if self.is_main:
                 quick = self.train_tracker.get_quick_status() if (self.train_tracker is not None and len(self.train_tracker.actor_preds) >= 10) else {}
                 if show_tqdm:
                     postfix = {'loss': f"{loss_meter.avg:.4f}", 'accum': f"{(step % grad_accum_steps) + 1}/{grad_accum_steps}"}
+                    if "loss_actor" in loss_component_meters:
+                        postfix['act_l'] = f"{loss_component_meters['loss_actor'].avg:.3f}"
+                    if "loss_ego" in loss_component_meters:
+                        postfix['ego_l'] = f"{loss_component_meters['loss_ego'].avg:.3f}"
+                    if "attn_loss" in loss_component_meters:
+                        postfix['att_l'] = f"{loss_component_meters['attn_loss'].avg:.3f}"
                     if quick:
                         postfix['mAP'] = f"{quick.get('mAP', 0.0):.3f}"
                     pbar.set_postfix(postfix)
@@ -199,26 +212,40 @@ class Trainer:
                     if self.use_wandb:
                         import wandb
                         if wandb.run is not None:
-                            wandb.log({
+                            wandb_log_dict = {
                                 "train/loss_step": total_loss.item(),
                                 "train/loss_avg": loss_meter.avg,
                                 "train/step": (epoch - 1) * total_steps + step,
-                            })
+                            }
+                            for comp_k, comp_m in loss_component_meters.items():
+                                wandb_log_dict[f"train/{comp_k}_avg"] = comp_m.avg
+                            wandb.log(wandb_log_dict)
                     if (step + 1) % 50 == 0 or (step + 1) == total_steps:
                         mAP_str = f" | mAP: {quick.get('mAP', 0.0):.4f}" if quick else ""
-                        print(f"Epoch [{epoch}] Step [{step+1}/{total_steps}] Loss: {loss_meter.avg:.4f}{mAP_str}")
+                        comp_str = ""
+                        if "loss_actor" in loss_component_meters:
+                            comp_str += f" | Actor Loss: {loss_component_meters['loss_actor'].avg:.4f}"
+                        if "loss_ego" in loss_component_meters:
+                            comp_str += f" | Ego Loss: {loss_component_meters['loss_ego'].avg:.4f}"
+                        if "attn_loss" in loss_component_meters:
+                            comp_str += f" | Attn Loss: {loss_component_meters['attn_loss'].avg:.4f}"
+                        if "bg_attn_loss" in loss_component_meters:
+                            comp_str += f" | Bg Attn Loss: {loss_component_meters['bg_attn_loss'].avg:.4f}"
+                        print(f"Epoch [{epoch}] Step [{step+1}/{total_steps}] Loss: {loss_meter.avg:.4f}{comp_str}{mAP_str}")
 
                 if self.train_tracker is not None and diagnose_every_steps > 0 and (step + 1) % diagnose_every_steps == 0:
                     diag_file = os.path.join(self.save_dir, "train_diagnostics_live.json")
                     self.train_tracker.save_json(diag_file)
 
-        return loss_meter.avg, last_grad_info
+        avg_loss_components = {k: v.avg for k, v in loss_component_meters.items()}
+        return loss_meter.avg, avg_loss_components, last_grad_info
 
     @torch.no_grad()
     def evaluate(self, epoch: Optional[int] = None) -> Tuple[float, float, dict]:
         """Execute evaluation loop and compute mAP and diagnostic metrics."""
         self.model.eval()
         loss_meter = AverageMeter()
+        loss_component_meters: Dict[str, AverageMeter] = {}
         all_preds = []
         all_gts = []
 
@@ -245,8 +272,14 @@ class Trainer:
                 targets = {"target_actor": batch['gt_actor'].to(self.device), "target_ego": batch['gt_ego'].to(self.device)}
 
             preds = self.model(videos)
-            total_loss, _ = self.criterion(preds, targets)
+            total_loss, loss_dict = self.criterion(preds, targets)
             loss_meter.update(total_loss.item(), n=targets["target_actor"].size(0))
+            if isinstance(loss_dict, dict):
+                for k, v in loss_dict.items():
+                    if k != "total_loss" and v is not None:
+                        if k not in loss_component_meters:
+                            loss_component_meters[k] = AverageMeter()
+                        loss_component_meters[k].update(v.item() if isinstance(v, torch.Tensor) else float(v), n=targets["target_actor"].size(0))
 
             pred_actor = preds.get("pred_actor")
             if pred_actor.ndim == 3:
@@ -413,6 +446,9 @@ class Trainer:
             except Exception as e:
                 print(f"Warning: Failed to render best/worst slot visualizations: {e}")
 
+        avg_val_loss_components = {k: v.avg for k, v in loss_component_meters.items()}
+        diag_summary["loss_components"] = avg_val_loss_components
+
         return loss_meter.avg, mAP, diag_summary
 
     def fit(self, epochs: int, val_every: int = 5):
@@ -421,28 +457,57 @@ class Trainer:
             print("Starting training via Modular Engine...")
 
         for epoch in range(1, epochs + 1):
-            train_loss, train_grad_info = self.train_one_epoch(epoch)
+            train_loss, train_loss_dict, train_grad_info = self.train_one_epoch(epoch)
 
             train_diag = None
             if self.is_main:
-                print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f}")
+                loss_breakdown_str = ""
+                if train_loss_dict:
+                    if "loss_actor" in train_loss_dict:
+                        loss_breakdown_str += f" | Actor Loss: {train_loss_dict['loss_actor']:.4f}"
+                    if "loss_ego" in train_loss_dict:
+                        loss_breakdown_str += f" | Ego Loss: {train_loss_dict['loss_ego']:.4f}"
+                    if "attn_loss" in train_loss_dict:
+                        loss_breakdown_str += f" | Attn Loss: {train_loss_dict['attn_loss']:.4f}"
+                    if "bg_attn_loss" in train_loss_dict:
+                        loss_breakdown_str += f" | Bg Attn Loss: {train_loss_dict['bg_attn_loss']:.4f}"
+                print(f"Epoch [{epoch}/{epochs}] Train Loss: {train_loss:.4f}{loss_breakdown_str}")
                 if self.train_tracker is not None:
                     train_diag = self.train_tracker.compute_summary(clear_buffers=True)
+                    if train_loss_dict:
+                        train_diag["loss_components"] = train_loss_dict
                     train_diag_path = os.path.join(self.save_dir, f"train_diagnostics_epoch_{epoch}.json")
                     self.train_tracker.save_json(train_diag_path, train_diag)
 
                 if self.use_wandb:
                     import wandb
-                    wandb.log({"epoch": epoch, "train/epoch_loss": train_loss})
+                    wandb_train_dict = {"epoch": epoch, "train/epoch_loss": train_loss}
+                    if train_loss_dict:
+                        for l_name, l_val in train_loss_dict.items():
+                            wandb_train_dict[f"train/epoch_{l_name}"] = l_val
+                    wandb.log(wandb_train_dict)
 
             val_loss, val_map, val_diag = None, None, None
             if self.val_loader is not None and (epoch % val_every == 0 or epoch == epochs):
                 val_loss, val_map, val_diag = self.evaluate(epoch=epoch)
                 if self.is_main:
-                    print(f"Epoch [{epoch}/{epochs}] Val Loss: {val_loss:.4f} | Val mAP: {val_map:.4f}")
+                    val_comp_str = ""
+                    val_loss_comps = val_diag.get("loss_components", {}) if val_diag else {}
+                    if val_loss_comps:
+                        if "loss_actor" in val_loss_comps:
+                            val_comp_str += f" | Val Actor Loss: {val_loss_comps['loss_actor']:.4f}"
+                        if "loss_ego" in val_loss_comps:
+                            val_comp_str += f" | Val Ego Loss: {val_loss_comps['loss_ego']:.4f}"
+                        if "attn_loss" in val_loss_comps:
+                            val_comp_str += f" | Val Attn Loss: {val_loss_comps['attn_loss']:.4f}"
+                    print(f"Epoch [{epoch}/{epochs}] Val Loss: {val_loss:.4f}{val_comp_str} | Val mAP: {val_map:.4f}")
                     if self.use_wandb:
                         import wandb
-                        wandb.log({"val/loss": val_loss, "val/mAP": val_map, "epoch": epoch})
+                        wandb_val_dict = {"val/loss": val_loss, "val/mAP": val_map, "epoch": epoch}
+                        if val_loss_comps:
+                            for vl_name, vl_val in val_loss_comps.items():
+                                wandb_val_dict[f"val/{vl_name}"] = vl_val
+                        wandb.log(wandb_val_dict)
 
                     if val_diag and self.val_tracker is not None:
                         diag_path = os.path.join(self.save_dir, f"diagnostics_epoch_{epoch}.json")
@@ -485,6 +550,8 @@ class Trainer:
                     optimizer=self.optimizer,
                     diag_summary=val_diag or train_diag,
                     grad_info=train_grad_info,
+                    train_loss_components=train_loss_dict,
+                    val_loss_components=val_diag.get("loss_components", {}) if val_diag else None,
                 )
 
                 if self.use_wandb:

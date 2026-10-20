@@ -25,6 +25,13 @@ This sheet summarizes the macroscopic progression of the training process at the
 | **`Epoch`** | Integer | $1, 2, \dots, N$ | Current training epoch index. |
 | **`Train_Loss`** | Float | Mean batch loss over epoch | Average composite loss over the training dataset for the current epoch (weighted sum of actor classification loss, ego action loss, etc.). A steadily declining loss indicates stable convergence. |
 | **`Val_Loss`** | Float | Mean validation loss | Average composite loss evaluated on the validation set. If `Train_Loss` decreases while `Val_Loss` increases, the model is overfitting. |
+| **`Train_Actor_Loss`** | Float | Mean actor loss on train | Dedicated training multi-label classification loss for actor action slots (BCE / Focal Loss). Measures accuracy of detecting 64 actor actions. |
+| **`Train_Ego_Loss`** | Float | Mean ego loss on train | Dedicated training categorical cross-entropy loss for ego-vehicle movement prediction (7 classes). |
+| **`Train_Attn_Loss`** | Float | Mean action attention loss | Attention supervision loss for positive actor action slots against spatial target masks (used in `BetterActionSlotLoss`). |
+| **`Train_Bg_Attn_Loss`**| Float | Mean background attention loss | Background slot attention supervision loss penalizing attention on action areas (used in `BetterActionSlotLoss`). |
+| **`Val_Actor_Loss`** | Float | Mean actor loss on val | Validation multi-label classification loss for actor actions. |
+| **`Val_Ego_Loss`** | Float | Mean ego loss on val | Validation categorical cross-entropy loss for ego-vehicle action. |
+| **`Val_Attn_Loss`** | Float | Mean attention loss on val | Validation spatial attention mask supervision loss. |
 | **`Train_mAP`** | Float | Mean AP across actor classes | Mean Average Precision computed across all 64 actor action classes on the training split. |
 | **`Val_mAP`** | Float | Mean AP across actor classes | Mean Average Precision on the validation set. **Primary metric for model evaluation and checkpoint selection.** |
 | **`LR`** | Float | Optimizer param groups | Current learning rate applied by the scheduler for the epoch. |

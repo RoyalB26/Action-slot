@@ -22,7 +22,9 @@ class ExcelTrainingLogger:
             excel_path (str): Destination path for the .xlsx file.
         """
         self.excel_path = excel_path
-        os.makedirs(os.path.dirname(excel_path), exist_ok=True)
+        parent_dir = os.path.dirname(excel_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
         self.epoch_records = []
         self.grad_records = []
         self.qkv_records = []
@@ -157,6 +159,8 @@ class ExcelTrainingLogger:
         optimizer=None,
         diag_summary=None,
         grad_info=None,
+        train_loss_components=None,
+        val_loss_components=None,
     ):
         """Record epoch full metrics and dump updated spreadsheet to Excel.
 
@@ -170,16 +174,25 @@ class ExcelTrainingLogger:
             optimizer (Optimizer, optional): Optimizer.
             diag_summary (dict, optional): Diagnostic report from PerformanceTracker.
             grad_info (tuple, optional): Pre-extracted (total_grad_norm, grad_dict) before zero_grad.
+            train_loss_components (dict, optional): Breakdown of training losses (actor, ego, attn, etc.).
+            val_loss_components (dict, optional): Breakdown of validation losses.
         """
         overview_dict, grad_dict, qkv_dict = {}, {}, {}
         if model is not None:
             overview_dict, grad_dict, qkv_dict = self.extract_model_stats(model, optimizer, grad_info=grad_info)
 
-        # 1. Append Overview Record
+        # 1. Append Overview Record with specific loss breakdown
         rec = {
             "Epoch": epoch,
             "Train_Loss": round(train_loss, 5),
             "Val_Loss": round(val_loss, 5) if val_loss is not None else None,
+            "Train_Actor_Loss": round(train_loss_components.get("loss_actor"), 5) if (train_loss_components and train_loss_components.get("loss_actor") is not None) else None,
+            "Train_Ego_Loss": round(train_loss_components.get("loss_ego"), 5) if (train_loss_components and train_loss_components.get("loss_ego") is not None) else None,
+            "Train_Attn_Loss": round(train_loss_components.get("attn_loss"), 5) if (train_loss_components and train_loss_components.get("attn_loss") is not None) else None,
+            "Train_Bg_Attn_Loss": round(train_loss_components.get("bg_attn_loss"), 5) if (train_loss_components and train_loss_components.get("bg_attn_loss") is not None) else None,
+            "Val_Actor_Loss": round(val_loss_components.get("loss_actor"), 5) if (val_loss_components and val_loss_components.get("loss_actor") is not None) else None,
+            "Val_Ego_Loss": round(val_loss_components.get("loss_ego"), 5) if (val_loss_components and val_loss_components.get("loss_ego") is not None) else None,
+            "Val_Attn_Loss": round(val_loss_components.get("attn_loss"), 5) if (val_loss_components and val_loss_components.get("attn_loss") is not None) else None,
             "Train_mAP": round(train_mAP, 4) if train_mAP is not None else None,
             "Val_mAP": round(val_mAP, 4) if val_mAP is not None else None,
             "LR": overview_dict.get("lr", 0.0),
