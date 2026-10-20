@@ -44,7 +44,12 @@ class ActionSlotModel(BaseActionModel):
         self.head_name = head_name
 
         # 1. Modular Backbone
-        self.backbone = BACKBONES.build(backbone_name)
+        bb_kwargs = {
+            "freeze_stages": kwargs.get("freeze_stages", 3),
+            "freeze_all": kwargs.get("freeze_all", False),
+            "unfreeze_all": kwargs.get("unfreeze_all", False),
+        }
+        self.backbone = BACKBONES.build(backbone_name, **bb_kwargs)
         in_c = self.backbone.out_channels
 
         # 2. Ego Feature Branch

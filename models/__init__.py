@@ -20,6 +20,9 @@ def build_model(args, num_ego_class: int = 7, num_actor_class: int = 64):
         "slot_dim": getattr(args, 'channel', 256),
         "bg_slot": getattr(args, 'bg_slot', False),
         "dropout": 0.5,
+        "freeze_stages": getattr(args, 'freeze_stages', 3),
+        "freeze_all": getattr(args, 'freeze_backbone', False),
+        "unfreeze_all": getattr(args, 'unfreeze_backbone', False),
     }
 
     model = MODELS.build(model_name, **kwargs)

@@ -31,15 +31,21 @@ class BaseBackbone(nn.Module, ABC):
 class X3DBackbone(BaseBackbone):
     """Pretrained X3D-M backbone from PyTorchVideo hub."""
 
-    def __init__(self, pretrained: bool = True, freeze_stages: int = 3):
+    def __init__(self, pretrained: bool = True, freeze_stages: int = 3, freeze_all: bool = False, unfreeze_all: bool = False):
         super().__init__()
         x3d_hub = torch.hub.load('facebookresearch/pytorchvideo:main', 'x3d_m', pretrained=pretrained)
         # All residual stages except the final 1x1x1 classification head
         self.blocks = x3d_hub.blocks[:-1]
         self._out_channels = 192
 
-        # Configure stage-wise freezing
-        if freeze_stages > 0:
+        # Configure freezing options for finetuning
+        if freeze_all:
+            for param in self.blocks.parameters():
+                param.requires_grad = False
+        elif unfreeze_all:
+            for param in self.blocks.parameters():
+                param.requires_grad = True
+        elif freeze_stages > 0:
             for block in self.blocks[:freeze_stages]:
                 for param in block.parameters():
                     param.requires_grad = False

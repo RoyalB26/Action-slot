@@ -95,18 +95,59 @@ def main():
     if is_main:
         print(f"Instantiating model '{args.model_name}' (backbone='{getattr(args, 'backbone', 'x3d')}, head= {getattr(args, 'head_name', 'linear_head')}') via Registry...")
     model = build_model(args, num_ego_class=num_ego_class, num_actor_class=num_actor_class)
+
+    # 4.1 Load Pretrained Checkpoint for Finetuning
+    finetune_path = getattr(args, 'finetune', None)
+    if finetune_path and os.path.exists(finetune_path):
+        state_dict = torch.load(finetune_path, map_location='cpu')
+        if "state_dict" in state_dict:
+            state_dict = state_dict["state_dict"]
+        # Remove potential 'module.' prefix from DDP saving
+        state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        if is_main:
+            print(f">> Successfully loaded pretrained weights for finetuning from: '{finetune_path}'")
+            if missing_keys:
+                print(f"   Missing keys (e.g. newly initialized heads): {len(missing_keys)} layers")
+            if unexpected_keys:
+                print(f"   Unexpected keys (skipped): {len(unexpected_keys)} layers")
+    elif finetune_path:
+        if is_main:
+            print(f"Warning: Specified finetune path '{finetune_path}' does not exist! Training from scratch.")
+
     criterion = build_loss(args, num_actor_class=num_actor_class)
 
     if accelerator is None:
         model = model.to(device)
         criterion = criterion.to(device)
 
-    # 5. Optimizer
-    optimizer = optim.AdamW(
-        filter(lambda p: p.requires_grad, model.parameters()),
-        lr=args.lr,
-        weight_decay=args.wd
-    )
+    # 5. Optimizer with Layer-wise Learning Rate support
+    backbone_lr = getattr(args, 'backbone_lr', None)
+    if backbone_lr is not None and hasattr(model, 'backbone'):
+        backbone_params = []
+        head_params = []
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if 'backbone' in name:
+                backbone_params.append(param)
+            else:
+                head_params.append(param)
+
+        param_groups = [
+            {'params': backbone_params, 'lr': backbone_lr},
+            {'params': head_params, 'lr': args.lr},
+        ]
+        if is_main:
+            print(f"Differential LR enabled: Backbone LR={backbone_lr}, Head/Slots LR={args.lr}")
+        optimizer = optim.AdamW(param_groups, weight_decay=args.wd)
+    else:
+        optimizer = optim.AdamW(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            lr=args.lr,
+            weight_decay=args.wd
+        )
 
     # 6. Accelerate DDP wrap
     if accelerator is not None:

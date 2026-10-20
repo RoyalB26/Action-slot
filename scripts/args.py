@@ -27,6 +27,11 @@ def get_train_parser():
     parser.add_argument('--head_name', type=str, default='linear_head', choices=['linear_head', 'allocated_head', 'deformable_head', 'head'], help='Classification head type')
     parser.add_argument('--num_slots', type=int, default=64, help='Number of slots')
     parser.add_argument('--channel', type=int, default=256, help='Feature channel dimension')
+    parser.add_argument('--finetune', type=str, default=None, help='Path to pretrained checkpoint (.pth) for finetuning')
+    parser.add_argument('--freeze_backbone', action='store_true', help='Freeze all backbone weights during finetuning')
+    parser.add_argument('--unfreeze_backbone', action='store_true', help='Unfreeze entire backbone for full end-to-end finetuning')
+    parser.add_argument('--freeze_stages', type=int, default=3, help='Number of initial backbone stages to freeze (default: 3)')
+    parser.add_argument('--backbone_lr', type=float, default=None, help='Specific lower learning rate for backbone parameters')
     parser.add_argument('--bg_slot', action='store_true', help='Append extra background slot')
 
     # Attention parameters
