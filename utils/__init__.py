@@ -1,15 +1,20 @@
-"""Utility package for Action-Slot with tracking, diagnostics, Excel logging, and attention heatmaps."""
+"""Utils package exports."""
 
 from .metrics import AverageMeter, inter_and_union
 from .normalization import get_mean, get_std
 from .tracker import PerformanceTracker
 from .excel_logger import ExcelTrainingLogger
+from .taco_labels import TACO_ACTOR_LABELS, TACO_EGO_LABELS
 from .visualizer import (
-    ATTN_COLORMAP,
-    create_attention_colormap,
     render_attention_heatmap,
-    save_attention_grid,
     denormalize_image,
+    save_attention_grid,
+    save_single_slot_all_frames,
+)
+from .attention_dumper import (
+    save_attention_matrix,
+    render_all_slots_from_file,
+    visualize_best_and_worst_slots,
 )
 
 __all__ = [
@@ -19,9 +24,13 @@ __all__ = [
     "get_std",
     "PerformanceTracker",
     "ExcelTrainingLogger",
-    "ATTN_COLORMAP",
-    "create_attention_colormap",
+    "TACO_ACTOR_LABELS",
+    "TACO_EGO_LABELS",
     "render_attention_heatmap",
-    "save_attention_grid",
     "denormalize_image",
+    "save_attention_grid",
+    "save_single_slot_all_frames",
+    "save_attention_matrix",
+    "render_all_slots_from_file",
+    "visualize_best_and_worst_slots",
 ]

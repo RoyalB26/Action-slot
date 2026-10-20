@@ -15,6 +15,8 @@ if BASE_DIR not in sys.path:
 
 from dataset.taco_test import TACO_TEST
 from models import build_model
+from utils.attention_dumper import save_attention_matrix, render_all_slots_from_file
+from utils.taco_labels import TACO_ACTOR_LABELS
 from scripts.args import get_test_parser
 
 
@@ -44,13 +46,20 @@ def main():
     model.eval()
 
     save_results = {}
+    saved_attn_sample = None
+    saved_video_sample = None
+    plot_enabled = getattr(args, 'plot', False)
 
     with torch.no_grad():
-        for batch in tqdm(test_loader, desc="Testing"):
+        for batch_idx, batch in enumerate(tqdm(test_loader, desc="Testing")):
             scenario = batch['scenario'][0]
             videos = [f.to(device, dtype=torch.float32) for f in batch['videos']]
 
             preds = model(videos)
+
+            if plot_enabled and saved_attn_sample is None and preds.get("attn") is not None:
+                saved_attn_sample = preds["attn"]
+                saved_video_sample = videos
             pred_actor = preds["pred_actor"]
 
             if pred_actor.ndim == 3:
@@ -61,10 +70,33 @@ def main():
             pred_actor_prob = torch.sigmoid(pred_actor).cpu().numpy()
             save_results[scenario] = pred_actor_prob
 
-    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
-    with open(args.save_path, 'wb') as f:
+    save_file_path = getattr(args, 'save_path', None) or getattr(args, 'output_pkl', 'prediction_results.pkl')
+    parent_dir = os.path.dirname(save_file_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    with open(save_file_path, 'wb') as f:
         pickle.dump(save_results, f)
-    print(f"Predictions saved to {args.save_path}")
+    print(f"Predictions saved to {save_file_path}")
+
+    # Render attention matrix and generate all 64 slot visualizations if --plot is enabled
+    if plot_enabled and saved_attn_sample is not None and saved_video_sample is not None:
+        plot_dir = os.path.join(getattr(args, 'save_dir', 'test_results'), "attention_plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        mat_path = os.path.join(plot_dir, "test_attention_matrix.npz")
+        save_attention_matrix(
+            attn_tensor=saved_attn_sample,
+            frames=saved_video_sample,
+            save_path=mat_path,
+            extra_metadata={"scenario": scenario},
+        )
+        print("Rendering 64 slot visualizations across all T frames for test sample...")
+        render_all_slots_from_file(
+            matrix_file=mat_path,
+            output_dir=plot_dir,
+            slot_names=TACO_ACTOR_LABELS,
+            prefix="test",
+        )
 
 
 if __name__ == '__main__':

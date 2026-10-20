@@ -15,6 +15,8 @@ if BASE_DIR not in sys.path:
 
 from dataset.taco import TACO
 from models import build_model
+from utils.attention_dumper import save_attention_matrix, render_all_slots_from_file, visualize_best_and_worst_slots
+from utils.taco_labels import TACO_ACTOR_LABELS
 from scripts.args import get_eval_parser
 
 
@@ -73,13 +75,21 @@ def main():
     all_preds = []
     all_gts = []
 
+    saved_attn_sample = None
+    saved_video_sample = None
+    plot_enabled = getattr(args, 'plot', False)
+
     with torch.no_grad():
-        for batch in tqdm(val_loader, desc="Evaluation"):
+        for batch_idx, batch in enumerate(tqdm(val_loader, desc="Evaluation")):
             videos = [f.to(device, dtype=torch.float32) for f in batch['videos']]
             label_actor = batch['gt_actor'].to(device)
 
             preds = model(videos)
             pred_actor = preds["pred_actor"]
+
+            if plot_enabled and saved_attn_sample is None and preds.get("attn") is not None:
+                saved_attn_sample = preds["attn"]
+                saved_video_sample = videos
 
             if pred_actor.ndim == 3:
                 pred_actor = pred_actor.max(dim=1)[0]
@@ -101,6 +111,25 @@ def main():
     print(f"Macro Precision              : {metrics['Precision']:.4f}")
     print(f"Macro Recall                 : {metrics['Recall']:.4f}")
     print("=" * 40)
+
+    # Render attention matrix and generate all 64 slot visualizations if --plot is set
+    if plot_enabled and saved_attn_sample is not None and saved_video_sample is not None:
+        plot_dir = os.path.join(getattr(args, 'save_dir', 'eval_results'), "attention_plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        mat_path = os.path.join(plot_dir, "eval_attention_matrix.npz")
+        save_attention_matrix(
+            attn_tensor=saved_attn_sample,
+            frames=saved_video_sample,
+            save_path=mat_path,
+            extra_metadata={"metrics": metrics},
+        )
+        print("Rendering 64 slot visualizations across all T frames...")
+        render_all_slots_from_file(
+            matrix_file=mat_path,
+            output_dir=plot_dir,
+            slot_names=TACO_ACTOR_LABELS,
+            prefix="eval",
+        )
 
 
 if __name__ == '__main__':

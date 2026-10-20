@@ -1,9 +1,8 @@
-"""Attention heatmap overlay and visualization utilities with thermal-gradient color mapping.
+"""Attention heatmap overlay and visualization utilities.
 
 Color Palette Specification:
-- High attention focus (Peak)   : Red
-- Medium attention focus        : Orange
-- Low / Background attention     : Deep Blue
+- Base video frames maintain natural RGB colors.
+- Attention highlights appear as intense red progressively intensifying with attention strength.
 """
 
 import os
@@ -15,30 +14,7 @@ import torch.nn.functional as F
 import matplotlib
 matplotlib.use('Agg', force=True)
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
 from utils.normalization import get_mean, get_std
-
-
-def create_attention_colormap():
-    """Create custom colormap transitioning smoothly: Blue (low) -> Cyan -> Green -> Orange -> Red (high).
-
-    This strictly implements:
-        - Low attention: Deep Blue
-        - Medium attention: Orange
-        - High attention: Red
-    """
-    colors = [
-        (0.0, "#00008b"),   # Deep Blue (low attention)
-        (0.25, "#0080ff"),  # Bright Blue
-        (0.5, "#ff8c00"),   # Orange (medium attention)
-        (0.75, "#ff4500"),  # Orange-Red
-        (1.0, "#ff0000"),   # Pure Red (high attention)
-    ]
-    return LinearSegmentedColormap.from_list("blue_orange_red", colors, N=256)
-
-
-# Global custom colormap instance
-ATTN_COLORMAP = create_attention_colormap()
 
 
 def denormalize_image(img_tensor):
@@ -55,7 +31,6 @@ def denormalize_image(img_tensor):
     else:
         img = np.array(img_tensor)
 
-    # If batched tensor (B, 3, H, W) is passed, take the first sample (3, H, W)
     if img.ndim == 4:
         img = img[0]
 
@@ -70,13 +45,16 @@ def denormalize_image(img_tensor):
     return img
 
 
-def render_attention_heatmap(frame_rgb, attn_map, alpha=0.55):
-    """Overlay attention heatmap on a video frame using Blue -> Orange -> Red thermal colormap.
+def render_attention_heatmap(frame_rgb, attn_map, alpha_max=0.75):
+    """Overlay progressive red highlight on original RGB frame based on attention intensity.
+
+    - Low attention: Keeps original frame natural colors.
+    - High attention: Progressively blends into pure glowing red ([255, 0, 0]).
 
     Args:
         frame_rgb (np.ndarray): Base RGB image array (H, W, 3) in range [0, 255].
-        attn_map (np.ndarray or torch.Tensor): 2D attention map (H_attn, W_attn) or (H, W).
-        alpha (float): Transparency factor blending the heatmap over the frame.
+        attn_map (np.ndarray or torch.Tensor): 2D attention map (H_attn, W_attn).
+        alpha_max (float): Maximum opacity factor for peak attention points.
 
     Returns:
         np.ndarray: Blended RGB image uint8 array of shape (H, W, 3).
@@ -97,13 +75,80 @@ def render_attention_heatmap(frame_rgb, attn_map, alpha=0.55):
     else:
         norm_attn = np.zeros_like(attn_map)
 
-    # Apply Blue -> Orange -> Red colormap (produces RGBA float in [0, 1])
-    heatmap_rgba = ATTN_COLORMAP(norm_attn)
-    heatmap_rgb = (heatmap_rgba[:, :, :3] * 255.0).astype(np.uint8)
+    # Progressive red mask: pure red in RGB is (255, 0, 0)
+    # Blend: output = (1 - alpha) * frame + alpha * red
+    alpha = (norm_attn ** 1.5) * alpha_max  # Smooth non-linear ramp
+    alpha = np.expand_dims(alpha, axis=-1)  # (H, W, 1)
 
-    # Alpha blending: blended = alpha * heatmap + (1 - alpha) * frame
-    blended = cv2.addWeighted(heatmap_rgb, alpha, frame_rgb, 1.0 - alpha, 0)
-    return blended
+    red_color = np.zeros_like(frame_rgb, dtype=np.float32)
+    red_color[:, :, 0] = 255.0  # Red channel
+
+    frame_float = frame_rgb.astype(np.float32)
+    blended = (1.0 - alpha) * frame_float + alpha * red_color
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def save_single_slot_all_frames(
+    frames,
+    attn_tensor,
+    slot_idx: int,
+    slot_name: str,
+    save_path: str,
+    title: str = None,
+):
+    """Render and save an image containing ALL T frames for a specific slot.
+
+    Args:
+        frames (list[torch.Tensor] or torch.Tensor): Video frames of shape (T, 3, H, W).
+        attn_tensor (torch.Tensor or np.ndarray): Shape (T, S, H, W) or (1, T, S, H, W).
+        slot_idx (int): Target slot index.
+        slot_name (str): Label name of the slot.
+        save_path (str): Output file path (.png).
+        title (str, optional): Header title.
+    """
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    if isinstance(attn_tensor, torch.Tensor):
+        attn = attn_tensor.detach().cpu().numpy()
+    else:
+        attn = np.array(attn_tensor)
+
+    if attn.ndim == 5:
+        attn = attn[0]
+
+    T, S, H_att, W_att = attn.shape
+
+    # Layout: arrange T frames into grid (e.g. 4x4 for T=16, or 2x8)
+    num_cols = 4 if T >= 4 else T
+    num_rows = int(np.ceil(T / num_cols))
+
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 3.8, num_rows * 2.5))
+    if num_rows == 1 and num_cols == 1:
+        axes = np.array([[axes]])
+    elif num_rows == 1:
+        axes = np.expand_dims(axes, 0)
+    elif num_cols == 1:
+        axes = np.expand_dims(axes, 1)
+
+    disp_title = title or f"Slot #{slot_idx:02d} [{slot_name}] - All {T} Frames (Progressive Red Heatmap)"
+    fig.suptitle(disp_title, fontsize=14, fontweight="bold", y=0.98)
+
+    for t_idx in range(num_rows * num_cols):
+        r = t_idx // num_cols
+        c = t_idx % num_cols
+        ax = axes[r, c]
+
+        if t_idx < T:
+            frame_rgb = denormalize_image(frames[t_idx])
+            slot_map = attn[t_idx, slot_idx]
+            blended = render_attention_heatmap(frame_rgb, slot_map, alpha_max=0.75)
+            ax.imshow(blended)
+            ax.set_title(f"Frame t={t_idx:02d}", fontsize=11, fontweight="bold")
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
 
 
 def save_attention_grid(
@@ -115,18 +160,7 @@ def save_attention_grid(
     frame_indices=(0, 4, 8, 12, 15),
     title="Action-Slot Spatiotemporal Attention",
 ):
-    """Render and save a spatiotemporal grid showing attention evolution across video frames.
-
-    Args:
-        frames (list[torch.Tensor] or torch.Tensor): Video clip frames of shape (T, 3, H, W).
-        attn_tensor (torch.Tensor or np.ndarray): Attention map of shape (T, num_slots, H, W)
-            or (1, T, num_slots, H, W).
-        save_path (str): Output destination image path (.jpg / .png).
-        slot_idx (int, optional): Specific slot index to plot. If None, plots top active slots.
-        top_k_slots (int): Number of top slots to plot when slot_idx is None.
-        frame_indices (tuple[int]): Temporal frame steps to sample for visualization.
-        title (str): Figure title.
-    """
+    """Backward-compatible grid visualization for selected frames and top slots."""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
     if isinstance(attn_tensor, torch.Tensor):
@@ -134,22 +168,20 @@ def save_attention_grid(
     else:
         attn = np.array(attn_tensor)
 
-    if attn.ndim == 5:  # (B, T, num_slots, H, W) -> take first sample
+    if attn.ndim == 5:
         attn = attn[0]
 
     T, S, H_att, W_att = attn.shape
 
-    # Choose slot indices to visualize
     if slot_idx is not None:
         target_slots = [slot_idx]
     else:
-        # Pick top active slots by highest peak activation energy
         slot_energies = [float(np.mean(attn[:, s])) for s in range(S)]
         target_slots = list(np.argsort(slot_energies)[::-1][:top_k_slots])
 
     valid_frames = [f for f in frame_indices if f < T]
     num_cols = len(valid_frames)
-    num_rows = len(target_slots) + 1  # 1 row for original frames + rows for slots
+    num_rows = len(target_slots) + 1
 
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 3.5, num_rows * 2.2))
     if num_rows == 1 and num_cols == 1:
@@ -161,7 +193,6 @@ def save_attention_grid(
 
     fig.suptitle(title, fontsize=14, fontweight="bold", y=0.98)
 
-    # 1. First row: Original video frames
     for col_idx, t_idx in enumerate(valid_frames):
         frame_rgb = denormalize_image(frames[t_idx])
         ax = axes[0, col_idx]
@@ -169,13 +200,11 @@ def save_attention_grid(
         ax.set_title(f"Frame t={t_idx}", fontsize=11, fontweight="bold")
         ax.axis("off")
 
-    # 2. Subsequent rows: Attention overlays for selected slots
     for row_idx, s in enumerate(target_slots, start=1):
         for col_idx, t_idx in enumerate(valid_frames):
             frame_rgb = denormalize_image(frames[t_idx])
             slot_map = attn[t_idx, s]
-            blended = render_attention_heatmap(frame_rgb, slot_map, alpha=0.58)
-
+            blended = render_attention_heatmap(frame_rgb, slot_map, alpha_max=0.75)
             ax = axes[row_idx, col_idx]
             ax.imshow(blended)
             if col_idx == 0:

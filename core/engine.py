@@ -15,6 +15,12 @@ from utils.metrics import AverageMeter
 from utils.tracker import PerformanceTracker
 from utils.excel_logger import ExcelTrainingLogger
 from utils.visualizer import save_attention_grid
+from utils.attention_dumper import (
+    save_attention_matrix,
+    visualize_best_and_worst_slots,
+    render_all_slots_from_file,
+)
+from utils.taco_labels import TACO_ACTOR_LABELS
 
 
 def calculate_mAP(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -221,6 +227,8 @@ class Trainer:
         show_tqdm = (not self.use_wandb) and self.is_main
         iterator = tqdm(self.val_loader, desc="[Validation]") if show_tqdm else self.val_loader
         attn_saved = False
+        saved_sample_videos = None
+        saved_sample_attn = None
 
         for batch_idx, batch in enumerate(iterator):
             if self.accelerator is not None:
@@ -259,21 +267,25 @@ class Trainer:
                     target_ego=targets.get("target_ego")
                 )
 
-            # Save sample attention heatmap for the first validation batch
+            # Save sample attention matrix and prepare best/worst slot visualization
             attn = preds.get("attn")
             if self.is_main and self.attn_vis_dir and attn is not None and not attn_saved:
                 ep_tag = f"epoch_{epoch}_" if epoch is not None else ""
-                plot_file = os.path.join(self.attn_vis_dir, f"{ep_tag}val_batch_{batch_idx}_attention.png")
+                # Dump attention matrix to .npz file
+                mat_file = os.path.join(self.attn_vis_dir, f"{ep_tag}attention_matrix.npz")
                 try:
-                    save_attention_grid(
-                        frames=videos,
+                    save_attention_matrix(
                         attn_tensor=attn,
-                        save_path=plot_file,
-                        title=f"Attention Map [Epoch {epoch if epoch is not None else ''}]"
+                        frames=videos,
+                        save_path=mat_file,
+                        extra_metadata={"epoch": epoch, "batch_idx": batch_idx},
                     )
+                    # Cache sample videos and attn for epoch best/worst visualization after tracker computation
+                    saved_sample_videos = videos
+                    saved_sample_attn = attn
                     attn_saved = True
                 except Exception as e:
-                    print(f"Warning: Failed to save attention heatmap: {e}")
+                    print(f"Warning: Failed to save attention matrix: {e}")
                     attn_saved = True
 
         all_preds = np.concatenate(all_preds, axis=0)
@@ -288,6 +300,21 @@ class Trainer:
         diag_summary = {}
         if self.val_tracker is not None:
             diag_summary = self.val_tracker.compute_summary(clear_buffers=True)
+
+        # Generate 1 Best Slot and 1 Worst Slot visualizations across all T frames
+        if self.is_main and self.attn_vis_dir and saved_sample_videos is not None and saved_sample_attn is not None:
+            try:
+                per_class = diag_summary.get("all_actor_classes", [])
+                visualize_best_and_worst_slots(
+                    frames=saved_sample_videos,
+                    attn_tensor=saved_sample_attn,
+                    output_dir=self.attn_vis_dir,
+                    epoch=epoch,
+                    slot_names=TACO_ACTOR_LABELS,
+                    per_class_summary=per_class,
+                )
+            except Exception as e:
+                print(f"Warning: Failed to render best/worst slot visualizations: {e}")
 
         return loss_meter.avg, mAP, diag_summary
 

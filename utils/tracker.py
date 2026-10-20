@@ -5,17 +5,7 @@ import json
 import numpy as np
 import torch
 from sklearn.metrics import average_precision_score, precision_recall_fscore_support
-
-
-EGO_ACTION_NAMES = [
-    "Stop",
-    "Go / Accelerate",
-    "Turn Left",
-    "Turn Right",
-    "Lane Change Left",
-    "Lane Change Right",
-    "Slow Down / Brake",
-]
+from utils.taco_labels import TACO_ACTOR_LABELS, TACO_EGO_LABELS
 
 
 class PerformanceTracker:
@@ -31,8 +21,24 @@ class PerformanceTracker:
         """
         self.num_actor_class = num_actor_class
         self.num_ego_class = num_ego_class
-        self.actor_names = actor_names or [f"Actor_Class_{i}" for i in range(num_actor_class)]
-        self.ego_names = ego_names or (EGO_ACTION_NAMES if num_ego_class == 7 else [f"Ego_Class_{i}" for i in range(num_ego_class)])
+
+        # Default to canonical TACO labels
+        if actor_names is not None:
+            self.actor_names = actor_names
+        elif num_actor_class == 64:
+            self.actor_names = TACO_ACTOR_LABELS[:64]
+        elif num_actor_class == 65:
+            self.actor_names = TACO_ACTOR_LABELS[:65]
+        else:
+            self.actor_names = [f"Actor_Class_{i}" for i in range(num_actor_class)]
+
+        if ego_names is not None:
+            self.ego_names = ego_names
+        elif num_ego_class == 7:
+            self.ego_names = TACO_EGO_LABELS
+        else:
+            self.ego_names = [f"Ego_Class_{i}" for i in range(num_ego_class)]
+
         self.reset()
 
     def reset(self):
@@ -52,11 +58,10 @@ class PerformanceTracker:
             target_ego (torch.Tensor or np.ndarray, optional): Ego target indices (B,).
         """
         if isinstance(pred_actor, torch.Tensor):
-            # If actor logits are 3D (B, num_slots, C), reduce max over slots
             if pred_actor.ndim == 3:
                 pred_actor = pred_actor.max(dim=1)[0]
-                if pred_actor.shape[-1] > self.num_actor_class:
-                    pred_actor = pred_actor[:, :self.num_actor_class]
+            if pred_actor.shape[-1] > self.num_actor_class:
+                pred_actor = pred_actor[:, :self.num_actor_class]
             probs_actor = torch.sigmoid(pred_actor.float()).detach().cpu().numpy()
         else:
             probs_actor = np.asarray(pred_actor)
@@ -111,7 +116,6 @@ class PerformanceTracker:
             else:
                 ap = 0.0
 
-            # Confusion counts
             tp = int(np.sum((pred_i == 1) & (gt_i == 1)))
             fp = int(np.sum((pred_i == 1) & (gt_i == 0)))
             fn = int(np.sum((pred_i == 0) & (gt_i == 1)))
@@ -121,7 +125,6 @@ class PerformanceTracker:
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
             f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
 
-            # Diagnose failure mode
             if pos_count == 0:
                 failure_cause = "Zero test support (Class never appeared in ground truth)"
             elif ap >= 0.6:
@@ -196,79 +199,33 @@ class PerformanceTracker:
 
         return report
 
-    def print_diagnostic_table(self, summary=None, title="MODEL DIAGNOSTIC REPORT"):
-        """Format and print an informative diagnostic console report."""
-        if summary is None:
-            summary = self.compute_summary()
-
-        print("\n" + "=" * 80)
-        print(f" {title} (Overall Actor mAP: {summary.get('mAP', 0.0):.4f})")
-        print("=" * 80)
-
-        # 1. Top 5 Best Classes
-        print("\n[+] TOP 5 BEST PERFORMING ACTOR ACTIONS:")
-        print(f"{'Class':<25} | {'Support':<8} | {'AP':<8} | {'Prec':<8} | {'Rec':<8} | Status")
-        print("-" * 80)
-        for c in summary.get("best_performing_actor_classes", [])[:5]:
-            print(f"{c['name'][:24]:<25} | {c['support']:<8} | {c['ap']:<8.4f} | {c['precision']:<8.4f} | {c['recall']:<8.4f} | {c['primary_issue']}")
-
-        # 2. Top 5 Worst Classes with Root Cause
-        print("\n[-] TOP 5 WORST PERFORMING ACTOR ACTIONS & ROOT CAUSE ANALYSIS:")
-        print(f"{'Class':<25} | {'Support':<8} | {'AP':<8} | {'Prec':<8} | {'Rec':<8} | Root Cause Diagnosis")
-        print("-" * 80)
-        for c in summary.get("worst_performing_actor_classes", [])[:5]:
-            print(f"{c['name'][:24]:<25} | {c['support']:<8} | {c['ap']:<8.4f} | {c['precision']:<8.4f} | {c['recall']:<8.4f} | {c['primary_issue']}")
-
-        # 3. Ego performance
-        ego_met = summary.get("ego_metrics", {})
-        if ego_met:
-            print("\n[*] EGO-VEHICLE ACTION PREDICTION:")
-            print(f"Overall Accuracy: {ego_met.get('overall_accuracy', 0.0):.4f}")
-            for name, d in ego_met.get("per_class", {}).items():
-                print(f"  - {name:<22}: Acc = {d['accuracy']:.4f} (count={d['count']})")
-        print("=" * 80 + "\n")
-
-    def get_quick_status(self):
-        """Compute quick metrics (mAP, ego acc, worst 3 classes) for real-time train progress.
-
-        Returns:
-            dict: Concise tracking status dictionary.
-        """
+    def get_quick_status(self) -> dict:
+        """Compute quick lightweight status for training progress bars."""
         if len(self.actor_preds) == 0:
             return {}
+        try:
+            preds = np.concatenate(self.actor_preds, axis=0)
+            gts = np.concatenate(self.actor_targets, axis=0)
+            aps = []
+            for i in range(min(self.num_actor_class, preds.shape[1])):
+                if np.sum(gts[:, i]) > 0:
+                    aps.append(average_precision_score(gts[:, i], preds[:, i]))
+            map_score = float(np.mean(aps)) if len(aps) > 0 else 0.0
 
-        all_actor_probs = np.concatenate(self.actor_preds, axis=0)
-        all_actor_gts = np.concatenate(self.actor_targets, axis=0)
+            ego_acc = 0.0
+            if len(self.ego_preds) > 0:
+                ego_probs = np.concatenate(self.ego_preds, axis=0)
+                ego_gts = np.concatenate(self.ego_targets, axis=0)
+                ego_acc = float(np.mean(np.argmax(ego_probs, axis=-1) == ego_gts))
 
-        ap_list = []
-        class_aps = []
-        for i in range(self.num_actor_class):
-            gt_i = all_actor_gts[:, i]
-            if np.sum(gt_i) > 0:
-                ap = float(average_precision_score(gt_i, all_actor_probs[:, i]))
-                ap_list.append(ap)
-                class_aps.append((self.actor_names[i], ap, int(np.sum(gt_i))))
+            return {"mAP": round(map_score, 4), "ego_acc": round(ego_acc, 4)}
+        except Exception:
+            return {}
 
-        mean_ap = float(np.mean(ap_list)) if len(ap_list) > 0 else 0.0
-        class_aps.sort(key=lambda x: x[1])
-        worst_3 = [f"{name} ({ap:.2f})" for name, ap, _ in class_aps[:3]]
-
-        ego_acc = 0.0
-        if len(self.ego_preds) > 0:
-            all_ego_probs = np.concatenate(self.ego_preds, axis=0)
-            all_ego_gts = np.concatenate(self.ego_targets, axis=0)
-            ego_acc = float(np.mean(np.argmax(all_ego_probs, axis=-1) == all_ego_gts))
-
-        return {
-            "mAP": mean_ap,
-            "ego_acc": ego_acc,
-            "worst_classes": worst_3,
-        }
-
-    def save_json(self, filepath, summary=None):
-        """Save detailed diagnostics as JSON file."""
+    def save_json(self, save_path: str, summary: dict = None):
+        """Save performance report to a JSON file."""
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         if summary is None:
-            summary = self.compute_summary()
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
+            summary = self.compute_summary(clear_buffers=False)
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=4, ensure_ascii=False)

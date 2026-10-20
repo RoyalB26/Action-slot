@@ -120,4 +120,6 @@ def get_test_parser():
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for test inference')
     parser.add_argument('--num_workers', type=int, default=2, help='Worker threads')
     parser.add_argument('--output_pkl', type=str, default='prediction_results.pkl', help='Output pickle file')
+    parser.add_argument('--plot', action='store_true', help='Dump attention matrix and plot 64 slot visualizations')
+    parser.add_argument('--save_dir', type=str, default='test_results', help='Destination folder for visualizations')
     return parser.parse_args()
