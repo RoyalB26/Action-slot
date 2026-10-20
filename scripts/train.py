@@ -360,10 +360,12 @@ def main():
     # Setup Accelerate if requested
     accelerator = None
     if getattr(args, 'accelerate', False):
-        from accelerate import Accelerator
+        from accelerate import Accelerator, DistributedDataParallelKwargs
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         accelerator = Accelerator(
             mixed_precision='fp16' if args.amp else 'no',
             gradient_accumulation_steps=args.grad_accum_steps,
+            kwargs_handlers=[ddp_kwargs],
         )
         device = accelerator.device
 
