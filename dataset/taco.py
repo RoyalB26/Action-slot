@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 from utils.normalization import get_mean, get_std
+from dataset.transforms import build_train_video_transforms
 
 
 class TACO(Dataset):
@@ -171,11 +172,9 @@ class TACO(Dataset):
         img_w = getattr(args, 'img_width', 384)
         self.img_size = (img_h, img_w)
 
-        self.train_transforms = transforms.Compose([
-            transforms.Resize(self.img_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=get_mean(norm_value=1), std=get_std(norm_value=1)),
-        ])
+        # Video transforms: video-level augmentation for train, deterministic for val
+        use_aug = getattr(args, 'augment', False) and (split == 'train')
+        self.clip_transform = build_train_video_transforms(self.img_size, augment=use_aug)
 
     @property
     def env(self):
@@ -206,7 +205,7 @@ class TACO(Dataset):
             dict: Sample dictionary with videos, gt_actor, and gt_ego.
         """
         video_key = self.videos_list[idx]
-        imgs = []
+        raw_pil_imgs = []
 
         # Read from LMDB if available
         if self.env is not None and isinstance(video_key, list):
@@ -220,7 +219,7 @@ class TACO(Dataset):
                             img = Image.open(io.BytesIO(frame_bytes)).convert('RGB')
                         else:
                             img = Image.fromarray(np.uint8(frame_bytes)).convert('RGB')
-                        imgs.append(self.train_transforms(img))
+                        raw_pil_imgs.append(img)
         # Fallback for single integer index containing list of frames
         elif self.env is not None and isinstance(video_key, int):
             with self.env.begin(write=False) as txn:
@@ -231,7 +230,7 @@ class TACO(Dataset):
                 for b in imgs_bytes:
                     img_data = b['frame'] if isinstance(b, dict) and 'frame' in b else b
                     img = Image.open(io.BytesIO(img_data)).convert('RGB')
-                    imgs.append(self.train_transforms(img))
+                    raw_pil_imgs.append(img)
         # Otherwise fallback to raw images on disk
         elif self.root and os.path.exists(self.root):
             scenario_path = os.path.join(self.root, str(video_key))
@@ -240,15 +239,19 @@ class TACO(Dataset):
                 for f_name in frame_files[:16]:
                     img_path = os.path.join(scenario_path, f_name)
                     img = Image.open(img_path).convert('RGB')
-                    imgs.append(self.train_transforms(img))
+                    raw_pil_imgs.append(img)
 
-        # Fallback dummy tensor (16 frames of shape (3, img_h, img_w))
-        if len(imgs) < 16:
-            pad_needed = 16 - len(imgs)
+        # Pad with last image if sequence is short
+        if len(raw_pil_imgs) < 16:
+            pad_needed = 16 - len(raw_pil_imgs)
+            fallback_img = raw_pil_imgs[-1] if len(raw_pil_imgs) > 0 else Image.new('RGB', (self.img_size[1], self.img_size[0]))
             for _ in range(pad_needed):
-                imgs.append(imgs[-1] if len(imgs) > 0 else torch.zeros(3, self.img_size[0], self.img_size[1]))
+                raw_pil_imgs.append(fallback_img)
         else:
-            imgs = imgs[:16]
+            raw_pil_imgs = raw_pil_imgs[:16]
+
+        # Apply video clip transform (consistent augmentation across 16 frames)
+        imgs = self.clip_transform(raw_pil_imgs)
 
         # Multi-label binary target for actor actions: shape (64,)
         gt_actor = torch.zeros(self.num_class, dtype=torch.float32)

@@ -40,7 +40,7 @@ class SoftPositionEmbed3D(nn.Module):
 
 
 class SlotAttention(nn.Module):
-    """Spatiotemporal 3D Slot Attention mechanism."""
+    """Spatiotemporal 3D Slot Attention mechanism with regularized attention dropout."""
 
     def __init__(
         self,
@@ -51,6 +51,7 @@ class SlotAttention(nn.Module):
         input_dim=64,
         resolution=[16, 8, 24],
         allocated_slot=False,
+        slot_dropout=0.1,
     ):
         super().__init__()
         self.dim = dim
@@ -60,6 +61,7 @@ class SlotAttention(nn.Module):
         self.eps = eps
         self.scale = dim**-0.5
         self.resolution = resolution
+        self.slot_dropout = slot_dropout
 
         # Learnable Gaussian parameters for slot initialization
         self.slots_mu = nn.Parameter(torch.randn(1, num_slots, dim))
@@ -81,9 +83,11 @@ class SlotAttention(nn.Module):
         self.norm_slots = nn.LayerNorm(dim)
         self.norm_pre_ff = nn.LayerNorm(dim)
 
-        with torch.no_grad():
-            slots = torch.normal(self.slots_mu, self.slots_sigma)
-        self.register_buffer("slots", slots.contiguous())
+        self.attn_dropout = nn.Dropout(p=slot_dropout) if slot_dropout > 0 else nn.Identity()
+        self.ff_dropout = nn.Dropout(p=slot_dropout) if slot_dropout > 0 else nn.Identity()
+
+        # Direct learnable slots parameter (deterministic & fully differentiable)
+        self.slots = nn.Parameter(torch.randn(1, num_slots, dim) * 0.02)
 
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.pe = SoftPositionEmbed3D(
@@ -118,7 +122,10 @@ class SlotAttention(nn.Module):
         attn = attn_ori / attn_ori.sum(dim=-1, keepdim=True)
         self.last_attn = attn_ori.detach()
 
-        slots = torch.einsum('bjd,bij->bid', v, attn)
+        # Attention dropout for regularizing peak sharpness
+        attn_dropped = self.attn_dropout(attn)
+
+        slots = torch.einsum('bjd,bij->bid', v, attn_dropped)
         slots = slots.reshape(b, -1, d)
 
         if self.allocated_slot:
@@ -126,7 +133,9 @@ class SlotAttention(nn.Module):
         else:
             slots = slots[:, :self.num_slots, :]
 
-        slots = slots + self.fc2(F.relu(self.fc1(self.norm_pre_ff(slots))))
+        # Feedforward with dropout
+        ff_out = self.fc2(self.ff_dropout(F.relu(self.fc1(self.norm_pre_ff(slots)))))
+        slots = slots + ff_out
         return slots, attn_ori
 
     def forward(self, inputs, num_slots=None):

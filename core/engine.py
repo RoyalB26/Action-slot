@@ -54,6 +54,16 @@ def extract_gradient_stats(model: torch.nn.Module) -> Tuple[float, Dict[str, flo
             prefix = name.split('.')[0]
             grad_dict[f"grad_norm_{prefix}"] = grad_dict.get(f"grad_norm_{prefix}", 0.0) + (g_norm ** 2)
 
+            # Detailed breakdown for Deformable Head subcomponents
+            if "head.value_proj" in name:
+                grad_dict["grad_norm_head_value_proj"] = grad_dict.get("grad_norm_head_value_proj", 0.0) + (g_norm ** 2)
+            elif "head.out_proj" in name:
+                grad_dict["grad_norm_head_out_proj"] = grad_dict.get("grad_norm_head_out_proj", 0.0) + (g_norm ** 2)
+            elif "head.offset_proj" in name or "head.weight_proj" in name:
+                grad_dict["grad_norm_head_sampling_projs"] = grad_dict.get("grad_norm_head_sampling_projs", 0.0) + (g_norm ** 2)
+            elif "head.fc_actor" in name:
+                grad_dict["grad_norm_head_fc_actor"] = grad_dict.get("grad_norm_head_fc_actor", 0.0) + (g_norm ** 2)
+
     total_grad_norm = float(np.sqrt(total_grad_sq))
     for k in list(grad_dict.keys()):
         grad_dict[k] = float(np.sqrt(grad_dict[k]))
@@ -109,6 +119,11 @@ class Trainer:
         self.val_tracker = PerformanceTracker(self.num_actor_class, self.num_ego_class) if getattr(args, 'diagnose', False) else None
 
         self.best_map = 0.0
+        self.best_val_loss = float('inf')
+        self.patience = getattr(args, 'patience', 0)
+        self.early_stopping_metric = getattr(args, 'early_stopping_metric', 'val_map')
+        self.patience_counter = 0
+        self.early_stop_triggered = False
 
     def train_one_epoch(self, epoch: int) -> Tuple[float, Dict[str, float], Optional[Tuple[float, Dict[str, float]]]]:
         """Execute one complete training epoch with detailed loss breakdown."""
@@ -456,7 +471,7 @@ class Trainer:
         if self.is_main:
             print("Starting training via Modular Engine...")
 
-        for epoch in range(1, epochs + 1):
+        for epoch in range(26, epochs + 1):
             train_loss, train_loss_dict, train_grad_info = self.train_one_epoch(epoch)
 
             train_diag = None
@@ -518,11 +533,31 @@ class Trainer:
                     unwrapped = self.accelerator.unwrap_model(self.model) if self.accelerator is not None else self.model
                     torch.save(unwrapped.state_dict(), latest_path)
 
-                    if val_map > self.best_map:
+                    improved = False
+                    if self.early_stopping_metric == 'val_loss':
+                        if val_loss is not None and val_loss < self.best_val_loss:
+                            self.best_val_loss = val_loss
+                            improved = True
+                    else:
+                        if val_map is not None and val_map > self.best_map:
+                            self.best_map = val_map
+                            improved = True
+
+                    if val_map is not None and val_map > self.best_map:
                         self.best_map = val_map
+
+                    if improved:
+                        self.patience_counter = 0
                         best_path = os.path.join(self.save_dir, "best_model.pth")
                         torch.save(unwrapped.state_dict(), best_path)
-                        print(f">> Saved new best model (mAP: {self.best_map:.4f}) to {best_path}")
+                        metric_val_str = f"val_loss: {self.best_val_loss:.4f}" if self.early_stopping_metric == 'val_loss' else f"mAP: {self.best_map:.4f}"
+                        print(f">> Saved new best model ({metric_val_str}) to {best_path}")
+                    elif self.patience > 0:
+                        self.patience_counter += 1
+                        print(f">> Early stopping patience: {self.patience_counter}/{self.patience}")
+                        if self.patience_counter >= self.patience:
+                            print(f">> Early stopping triggered! Validation {self.early_stopping_metric} did not improve for {self.patience} evaluations.")
+                            self.early_stop_triggered = True
 
                     # Append to validation tracking report file and print to console
                     tracking_file = os.path.join(self.save_dir, "val_tracking.txt")
@@ -576,6 +611,10 @@ class Trainer:
                             wandb_metrics["attention/sample_heatmap"] = wandb.Image(plot_files[-1], caption=f"Epoch {epoch} Heatmap")
 
                     wandb.log(wandb_metrics)
+
+            if self.early_stop_triggered:
+                print(">> Terminating training loop early due to early stopping criteria.")
+                break
 
             if self.scheduler is not None:
                 self.scheduler.step()

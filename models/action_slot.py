@@ -81,6 +81,7 @@ class ActionSlotModel(BaseActionModel):
             input_dim=self.slot_dim,
             resolution=list(resolution3d),
             num_actor_class=num_actor_class,
+            slot_dropout=kwargs.get('slot_dropout', 0.1),
         )
 
         # 5. Modular Classification Head
@@ -95,6 +96,10 @@ class ActionSlotModel(BaseActionModel):
             num_ego_classes=self.num_ego_class,
             num_actor_classes=actor_classes_in_head,
             ego_channel=self.ego_c,
+            agg_grad_scale=kwargs.get('agg_grad_scale', 0.1),
+            agg_gate_init=kwargs.get('agg_gate_init', 0.1),
+            disable_agg_gate=kwargs.get('disable_agg_gate', False),
+            anchor_from_attn=kwargs.get('anchor_from_attn', True),
         )
 
         self.drop = nn.Dropout(p=dropout)
@@ -143,7 +148,7 @@ class ActionSlotModel(BaseActionModel):
         if ego_x is not None:
             ego_x = self.drop(ego_x)
 
-        pred_ego, pred_actor = self.head(slots, feat_map=feat_map, ego_x=ego_x)
+        pred_ego, pred_actor = self.head(slots, feat_map=feat_map, ego_x=ego_x, attn=attn_masks)
 
         return {
             "pred_actor": pred_actor,

@@ -136,6 +136,14 @@ class ExcelTrainingLogger:
             if hasattr(slot_attn_module, 'slots_sigma'):
                 qkv_dict['slots_sigma_norm'] = float(slot_attn_module.slots_sigma.norm(2).item())
 
+        # 4. Deformable Head Aggregation Diagnostics (Idea 6: Measure dominance)
+        head_module = getattr(model, 'head', None)
+        if head_module is not None:
+            if hasattr(head_module, 'last_slots_norm') and head_module.last_slots_norm is not None:
+                qkv_dict['deform_slots_norm'] = head_module.last_slots_norm
+                qkv_dict['deform_agg_norm'] = getattr(head_module, 'last_agg_norm', 0.0)
+                qkv_dict['deform_agg_to_slots_ratio'] = getattr(head_module, 'last_agg_ratio', 0.0)
+
         overview_dict = {
             "lr": current_lr,
             "total_grad_norm": total_grad_norm,
@@ -144,6 +152,7 @@ class ExcelTrainingLogger:
             "k_norm": qkv_dict.get('k_norm_mean', 0.0),
             "v_norm": qkv_dict.get('v_norm_mean', 0.0),
             "attn_entropy": qkv_dict.get('attn_entropy', 0.0),
+            "deform_agg_ratio": qkv_dict.get('deform_agg_to_slots_ratio', None),
         }
 
         return overview_dict, grad_dict, qkv_dict

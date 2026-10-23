@@ -25,6 +25,10 @@ def main():
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
     test_dataset = TACO_TEST(args)
+    if len(test_dataset) == 0:
+        print("[WARNING] No test images or scenarios found. Check your --input_path or --root argument.")
+        return
+
     test_loader = DataLoader(
         test_dataset,
         batch_size=1,
@@ -38,10 +42,11 @@ def main():
 
     # Build model via registry
     model = build_model(args, num_ego_class=num_ego_class, num_actor_class=num_actor_class)
-    if args.model_path and os.path.exists(args.model_path):
-        state_dict = torch.load(args.model_path, map_location=device)
+    ckpt_path = getattr(args, 'checkpoint', None) or getattr(args, 'model_path', None)
+    if ckpt_path and os.path.exists(ckpt_path):
+        state_dict = torch.load(ckpt_path, map_location=device)
         model.load_state_dict(state_dict)
-        print(f"Loaded checkpoint: {args.model_path}")
+        print(f"Loaded checkpoint: {ckpt_path}")
     model = model.to(device)
     model.eval()
 
@@ -70,6 +75,15 @@ def main():
             pred_actor_prob = torch.sigmoid(pred_actor).cpu().numpy()
             save_results[scenario] = pred_actor_prob
 
+            # Print prediction details for single image or quick test preview
+            if len(test_dataset) <= 10:
+                top_indices = np.argsort(pred_actor_prob[0])[::-1][:5]
+                print(f"\nScenario / Image: {scenario}")
+                print("Top-5 Actor Predictions:")
+                for rank, idx_cls in enumerate(top_indices, 1):
+                    lbl_name = TACO_ACTOR_LABELS[idx_cls] if idx_cls < len(TACO_ACTOR_LABELS) else f"Class_{idx_cls}"
+                    print(f"  {rank}. [{idx_cls}] {lbl_name}: {pred_actor_prob[0][idx_cls]:.4f}")
+
     save_file_path = getattr(args, 'save_path', None) or getattr(args, 'output_pkl', 'prediction_results.pkl')
     parent_dir = os.path.dirname(save_file_path)
     if parent_dir:
@@ -77,7 +91,7 @@ def main():
 
     with open(save_file_path, 'wb') as f:
         pickle.dump(save_results, f)
-    print(f"Predictions saved to {save_file_path}")
+    print(f"\nPredictions saved to {save_file_path}")
 
     # Render attention matrix and generate all 64 slot visualizations if --plot is enabled
     if plot_enabled and saved_attn_sample is not None and saved_video_sample is not None:

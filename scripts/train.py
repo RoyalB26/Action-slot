@@ -82,7 +82,7 @@ def main():
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=args.num_workers,
+        num_workers=1,
         pin_memory=True,
     )
 

@@ -47,13 +47,15 @@ class ActionSlotLoss(BaseLoss):
         bce_pos_weight: float = 10.0,
         ce_pos_weight: float = 1.0,
         ce_neg_weight: float = 0.05,
-        ego_loss_weight: float = 0.5,
+        actor_loss_weight: float = 2.0,
+        ego_loss_weight: float = 1.0,
         allocated_slot: bool = False,
         head_name: str = "linear_head",
         **kwargs
     ):
         super().__init__()
         self.num_actor_class = num_actor_class
+        self.actor_loss_weight = actor_loss_weight
         self.ego_loss_weight = ego_loss_weight
         self.allocated_slot = allocated_slot or (head_name == "allocated_head")
         self.bce_pos_weight = bce_pos_weight
@@ -100,9 +102,9 @@ class ActionSlotLoss(BaseLoss):
         if pred_ego is not None and target_ego is not None:
             loss_ego = self.ego_ce(pred_ego, target_ego)
             loss_dict["loss_ego"] = loss_ego
-            total_loss = loss_actor + self.ego_loss_weight * loss_ego
+            total_loss = self.actor_loss_weight * loss_actor + self.ego_loss_weight * loss_ego
         else:
-            total_loss = loss_actor
+            total_loss = self.actor_loss_weight * loss_actor
 
         loss_dict["total_loss"] = total_loss
         return total_loss, loss_dict
@@ -172,13 +174,14 @@ class BetterActionSlotLoss(BaseLoss):
         self.bce_pos_weight = getattr(args, 'bce_pos_weight', bce_pos_weight)
         self.ce_pos_weight = getattr(args, 'ce_pos_weight', ce_pos_weight)
         self.ce_neg_weight = getattr(args, 'ce_neg_weight', ce_neg_weight)
+        self.actor_loss_weight = getattr(args, 'actor_loss_weight', 2.0)
         self.action_attn_weight = getattr(args, 'action_attn_weight', 0.0)
         self.bg_attn_weight = getattr(args, 'bg_attn_weight', 0.0)
         self.seq_len = getattr(args, 'seq_len', 16)
         self.mask_every_frame = getattr(args, 'mask_every_frame', 2)
         self.bg_upsample = getattr(args, 'bg_upsample', 4)
 
-        self.allocated_slot = allocated_slot or getattr(args, 'allocated_slot', False) or (head_name == "allocated_head")
+        self.allocated_slot = allocated_slot or getattr(args, 'allocated_slot', False) or (head_name in ["allocated_head", "deformable_head"])
         self.model_name = getattr(args, 'model_name', 'action_slot')
         self.box = getattr(args, 'box', False)
         self.obj_mask = getattr(args, 'obj_mask', False)
@@ -360,8 +363,8 @@ class BetterActionSlotLoss(BaseLoss):
         attn_map = preds.get('attn')
         attn_losses = self.attn_loss(attn_map, targets, validate=validate)
 
-        # 4. Total weighted loss
-        total_loss = loss_actor
+        # 4. Total weighted loss (actor weight defaults to 2x ego weight)
+        total_loss = self.actor_loss_weight * loss_actor
         if loss_ego is not None:
             total_loss = total_loss + self.ego_loss_weight * loss_ego
 
@@ -386,7 +389,8 @@ def build_loss(args, num_actor_class: int = 64):
         "bce_pos_weight": getattr(args, 'bce_pos_weight', 10.0),
         "ce_pos_weight": getattr(args, 'ce_pos_weight', 1.0),
         "ce_neg_weight": getattr(args, 'ce_neg_weight', 0.05),
-        "ego_loss_weight": getattr(args, 'ego_loss_weight', 0.5),
+        "actor_loss_weight": getattr(args, 'actor_loss_weight', 2.0),
+        "ego_loss_weight": getattr(args, 'ego_loss_weight', 1.0),
         "head_name": getattr(args, 'head_name', 'linear_head'),
         "allocated_slot": getattr(args, 'allocated_slot', False),
     }

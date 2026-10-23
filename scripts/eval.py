@@ -65,10 +65,11 @@ def main():
 
     # Build model via registry
     model = build_model(args, num_ego_class=num_ego_class, num_actor_class=num_actor_class)
-    if args.model_path and os.path.exists(args.model_path):
-        state_dict = torch.load(args.model_path, map_location=device)
+    ckpt_path = getattr(args, 'checkpoint', None) or getattr(args, 'model_path', None)
+    if ckpt_path and os.path.exists(ckpt_path):
+        state_dict = torch.load(ckpt_path, map_location=device)
         model.load_state_dict(state_dict)
-        print(f"Loaded checkpoint from: {args.model_path}")
+        print(f"Loaded checkpoint from: {ckpt_path}")
     model = model.to(device)
     model.eval()
 

@@ -208,44 +208,15 @@ Kaggle và các cụm GPU thường có giới hạn RAM hệ thống (16-30 GB)
 
 ### Huấn luyện Multi-GPU với Accelerate (Kaggle 2x T4):
 ```bash
-accelerate launch \
-  --num_processes 2 \
-  --mixed_precision fp16 \
-  scripts/train.py \
-  --model_name action_slot \
-  --lmdb_train_path "/kaggle/input/datasets/royalb26/taco-dataset" \
-  --lmdb_val_path "/kaggle/input/datasets/royalb26/taco-dataset" \
-  --img_height 256 \
-  --img_width 768 \
-  --batch_size 4 \
-  --grad_accum_steps 8 \
-  --num_workers 2 \
-  --amp \
-  --clip_grad_norm 1.0 \
-  --diagnose \
-  --diagnose_every_steps 500 \
-  --plot_attn \
-  --epochs 100 \
-  --lr 5e-4 \
-  --wandb \
-  --accelerate
+accelerate launch --num_processes 2 --mixed_precision fp16 scripts/train.py --model_name action_slot --lmdb_train_path "/kaggle/input/datasets/royalb26/taco-dataset" --lmdb_val_path "/kaggle/input/datasets/royalb26/taco-dataset" --img_height 256 --img_width 768 --batch_size 4 --grad_accum_steps 8 --num_workers 2 --amp --clip_grad_norm 1.0 --diagnose --diagnose_every_steps 500 --plot_attn --epochs 100 --lr 5e-4 --wandb --accelerate
 ```
 
 ### Đánh giá Checkpoint (Validation):
 ```bash
-python scripts/eval.py \
-  --model_name action_slot \
-  --model_path checkpoints/best_model.pth \
-  --lmdb_val_path "/kaggle/input/datasets/royalb26/taco-dataset" \
-  --img_height 256 \
-  --img_width 768 \
-  --batch_size 8
+python scripts/eval.py --model_name action_slot --model_path checkpoints/best_model.pth --lmdb_val_path "/kaggle/input/datasets/royalb26/taco-dataset" --img_height 256 --img_width 768 --batch_size 8
 ```
 
 ### Chạy suy luận tạo file kết quả (Inference / Test):
 ```bash
-python scripts/test.py \
-  --model_name action_slot \
-  --model_path checkpoints/best_model.pth \
-  --save_path results/test_preds.pkl
+python scripts/test.py --model_name action_slot --model_path checkpoints/best_model.pth --save_path results/test_preds.pkl
 ```
